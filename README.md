@@ -49,15 +49,18 @@ No window switching. No split screen. No leaving fullscreen. Just code and video
 - **Auto Video Detection** — Badge shows video count; auto-detects SPA navigation (YouTube, Bilibili)
 - **Aspect Ratio Lock** — Window maintains video aspect ratio during resize
 - **Position Memory** — Remembers window position and size between sessions
-- **Drag & Resize** — Drag from title bar, resize from any edge/corner
+- **Drag & Resize** — Drag edges/corners, strip edges, `+/-` size buttons, Option+scroll, or `⌃⌥=` / `⌃⌥-`
 - **Opacity Toggle** — Semi-transparent mode for less visual obstruction
-- **Multi-Site Support** — YouTube, Bilibili, Twitch, Youku, iQiyi, Tencent Video, Douyin, Netflix*, and any site with HTML5 video
+- **Multi-Site Support** — YouTube, TikTok VN, Bilibili, Twitch, Youku, iQiyi, Tencent Video, Douyin, Netflix*, and any site with HTML5 video
+- **TikTok VN & Smartphone PiP** — Dedicated 9:16 vertical floating player for TikTok & Reels, with link pasting, shortlink resolving (`vt.tiktok.com`), curated VN channels, and popup-blocking UI cleanup.
+- **VibeWatch Cinema Hub** — Built-in movie theater dashboard with direct HLS playback, In-theaters / Chiếu Rạp catalog, dedicated Thuyết Minh & Lồng Tiếng sources, multi-server audio routing, and continue watching history.
 
 ## Supported Video Sites
 
 | Site | Strategy | Notes |
 |---|---|---|
 | YouTube | Embed via local HTTP server | Cookie forwarding, Referer workaround for Error 153 |
+| TikTok / TikTok VN | Dedicated 9:16 player + clean injection | Resolves `vt.tiktok.com`, hides popups/login banners, loops video |
 | Bilibili | Player embed | High quality, no danmaku |
 | Twitch | Player embed | Live streams supported |
 | Youku | Player embed | — |
@@ -110,16 +113,24 @@ Then load the extension in Chrome:
 4. The video pops out into a floating window with a loading spinner
 5. Switch to any app, even fullscreen — the video stays on top
 
-### Controls (appear on hover)
+### Controls
 
-- **Title bar** — Drag to move; close (red), opacity toggle (yellow), pin indicator (green)
-- **Progress bar** — Click anywhere to seek; red bar shows playback position
-- **Play/Pause** — Toggle playback
-- **Skip 10s** — Jump forward 10 seconds
-- **Volume** — Mute toggle + slider
-- **Time display** — Current position / total duration
-- **ESC** — Close the floating window
-- **Resize** — Drag any edge or corner (aspect ratio locked)
+The control strip sits **outside** the video, always visible, and never under the WebView. Drag empty space on the strip to move. Drag the strip's left or right edge to resize.
+
+- **Auto-dock** — The player moves itself so it does not cover Cursor, VS Code, Terminal, Claude, ChatGPT, Antigravity, Orca, Pi / Oh My Pi, or other AI/coding windows. It prioritizes the **frontmost** coding app and the **focused text input / caret band** (Accessibility). If those windows sit on the left, the player goes right, and the other way around. Drag it yourself to hold that spot (~75s, or until a major layout change). Green pin freezes auto-dock.
+- **Coding-safe fallback** — When the IDE is fullscreen and there is no clear pocket, the player shrinks, enables xuyên chuột, softens opacity, and parks in a corner instead of covering your editor.
+- **Xuyên chuột (default ON)** — Clicks pass through the video into the editor. The control strip stays outside the video and always clickable. Preference is remembered.
+- **Play/Pause, skip, volume, duck** — On the strip, and on the headset media keys. Boss hide (`⌘⇧B`) also pauses audio.
+- **Shortcuts (consumed, they do not type into the editor)** — `⌘⇧Space` play/pause, `⌘⇧G` xuyên chuột, `⌘⇧D` duck audio, `⌘⇧B` hide, `⌃⌥←/→` seek, `⌃⌥↑/↓` volume, `⌃⌥=` / `⌃⌥-` grow / shrink.
+- **ESC** — Close the floating window only when it is focused (during vibe coding the IDE keeps focus — use the strip close button or `⌘⇧B`).
+- **Resize** — Drag any edge/corner of the video, drag the strip edges, use `+/-` size buttons on the strip, Option+scroll over the window, or `⌃⌥=` / `⌃⌥-`. Aspect ratio stays locked. Size is remembered between sessions.
+- **One-tap movie float** — Popup and catalog “Phát nổi” starts episode 1 (or continue watching) without opening the episode picker.
+
+### Auto-dock coding / AI apps
+
+Avoided by default (desktop apps + matching terminal/browser titles): Cursor, VS Code, Windsurf, Zed, Trae, Void, Kiro, Qoder, **Antigravity**, PearAI, Xcode, JetBrains IDEs, **Orca**, Termic, Factory, Claude, ChatGPT, Codex, Gemini, **Pi**, **Oh My Pi (omp)**, OpenCode, Aider, Amp, Cline, Continue, Goose, Hermes, Auggie, Kilo Code, Warp, Ghostty, iTerm, Terminal, and more.
+
+For best caret/input avoidance, grant **Accessibility** to FloatVideo in System Settings → Privacy & Security → Accessibility.
 
 ## How It Works
 
