@@ -1,0 +1,287 @@
+<!DOCTYPE html>
+<html lang="vi" style="color-scheme: dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>VibeWatch Cinema — Rạp Phim FullFloatPiP</title>
+  <link rel="stylesheet" href="catalog.css">
+</head>
+<body>
+  <div class="app-container">
+    <!-- Navbar -->
+    <header class="navbar">
+      <div class="nav-left">
+        <div class="brand-icon">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18 3v2h-2V3H8v2H6V3H4v18h2v-2h2v2h8v-2h2v2h2V3h-2zM8 17H6v-2h2v2zm0-4H6v-2h2v2zm0-4H6V7h2v2zm10 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2z"/>
+          </svg>
+        </div>
+        <div class="brand-text">
+          <h1>VibeWatch <span class="brand-cinema-tag">CINEMA</span></h1>
+          <span class="tagline">Trải nghiệm điện ảnh đỉnh cao — Phát nổi đè lên Cursor, VSCode & mọi ứng dụng</span>
+        </div>
+      </div>
+
+      <div class="nav-center">
+        <div class="search-box">
+          <svg class="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="11" cy="11" r="8"></circle>
+            <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+          </svg>
+          <input type="text" id="search-input" placeholder="Tìm kiếm phim bom tấn 2026, anime, diễn viên..." autocomplete="off">
+          <button id="search-clear" class="clear-btn hidden" title="Xóa tìm kiếm" type="button" aria-label="Xóa tìm kiếm">&times;</button>
+
+          <!-- Autocomplete Live Search Suggestions Dropdown -->
+          <div id="search-suggestions" class="search-suggestions-dropdown hidden"></div>
+        </div>
+      </div>
+
+      <div class="nav-right">
+        <button id="btn-toggle-ghost" class="ghost-nav-btn active" title="Phím tắt: ⌘⇧G. Bấm xuyên qua phim để gõ code bên dưới." type="button" aria-pressed="true">
+          Xuyên chuột: <span id="ghost-status-text">Bật</span>
+        </button>
+        <div class="source-selector">
+          <label for="source-select">Nguồn:</label>
+          <select id="source-select">
+            <option value="kkphim">KKPhim (HLS FHD)</option>
+            <option value="nguonc">NguonC (Cập nhật liên tục)</option>
+            <option value="all" selected>Tổng Hợp Đa Nguồn (Khuyên Dùng)</option>
+          </select>
+        </div>
+      </div>
+    </header>
+
+    <!-- Categories & Filters Bar -->
+    <nav class="categories-bar">
+      <div class="cat-nav-inner">
+        <button class="cat-btn active" data-cat="moi">Trang chủ</button>
+        <button class="cat-btn cat-cinema" data-cat="chieurap">Chiếu rạp 2026</button>
+        <button class="cat-btn cat-tm" data-cat="thuyetminh">Thuyết minh</button>
+        <button class="cat-btn cat-lt" data-cat="longtieng">Lồng tiếng</button>
+        <button class="cat-btn" data-cat="bo">Phim bộ</button>
+        <button class="cat-btn" data-cat="le">Phim lẻ</button>
+        <button class="cat-btn" data-cat="hoathinh">Anime</button>
+        <button class="cat-btn" data-cat="tvshows">TV Shows</button>
+        <button class="cat-btn cat-live" data-cat="livetv" style="border-color: rgba(255, 59, 92, 0.4); color: #ff3b5c; font-weight: 600;">Truyền hình</button>
+        <button class="cat-btn cat-direct" id="btn-open-direct-url" style="background: rgba(10, 132, 255, 0.15); color: #409cff; border-color: rgba(10, 132, 255, 0.3);">Dán link</button>
+
+        <!-- Dropdown Genre filter -->
+        <select id="genre-select" class="nav-select-filter" title="Lọc theo thể loại">
+          <option value="">Thể loại</option>
+          <option value="hanh-dong">Hành động</option>
+          <option value="tinh-cam">Tình cảm</option>
+          <option value="co-trang">Cổ trang</option>
+          <option value="kinh-di">Kinh dị</option>
+          <option value="hai-huoc">Hài hước</option>
+          <option value="vien-tuong">Viễn tưởng</option>
+          <option value="tam-ly">Tâm lý</option>
+          <option value="vo-thuat">Võ thuật</option>
+          <option value="hinh-su">Hình sự</option>
+          <option value="phieu-luu">Phiêu lưu</option>
+        </select>
+
+        <!-- Dropdown Country filter -->
+        <select id="country-select" class="nav-select-filter" title="Lọc theo quốc gia">
+          <option value="">Quốc gia</option>
+          <option value="han-quoc">Hàn Quốc</option>
+          <option value="trung-quoc">Trung Quốc</option>
+          <option value="au-my">Âu Mỹ</option>
+          <option value="viet-nam">Việt Nam</option>
+          <option value="nhat-ban">Nhật Bản</option>
+          <option value="thai-lan">Thái Lan</option>
+        </select>
+
+        <button class="cat-btn cat-fav" data-cat="favorites">Danh sách của tôi</button>
+      </div>
+    </nav>
+
+    <!-- Cinema Hero Spotlight Banner -->
+    <section id="hero-spotlight" class="hero-spotlight hidden">
+      <div class="hero-backdrop" id="hero-backdrop"></div>
+      <div class="hero-gradient-overlay"></div>
+      <div class="hero-content">
+        <div class="hero-badges" id="hero-badges">
+          <span class="hero-badge hero-badge-chieurap">CHIẾU RẠP</span>
+          <span class="hero-badge hero-badge-rating" id="hero-rating">8.8</span>
+          <span class="hero-badge hero-badge-tm" id="hero-audio-badge">Thuyết Minh</span>
+        </div>
+        <h2 id="hero-title" class="hero-title">Tên Phim Bom Tấn Nổi Bật</h2>
+        <div id="hero-origin" class="hero-origin">Original Title · 2026</div>
+        <p id="hero-desc" class="hero-desc">Mô tả tóm tắt phim chiếu rạp với nội dung hấp dẫn...</p>
+        <div class="hero-actions">
+          <button id="hero-float-btn" class="hero-btn hero-btn-primary" type="button" title="Phát nổi — cửa sổ tự né vùng code. Tập sau tự động / Bỏ qua GT trong PiP.">
+            Phát nổi
+          </button>
+          <button id="hero-detail-btn" class="hero-btn hero-btn-secondary" type="button">
+            Chi tiết
+          </button>
+          <button id="hero-fav-btn" class="hero-btn hero-btn-ghost" title="Thêm vào danh sách của tôi" type="button" aria-pressed="false">
+            + Danh sách
+          </button>
+        </div>
+        <div id="hero-dots" class="hero-dots" hidden></div>
+        <p class="hero-playback-hint">Trong cửa sổ nổi: Tập sau tự động · Bỏ qua giới thiệu</p>
+      </div>
+    </section>
+
+    <!-- Continue Watching rail -->
+    <section id="continue-section" class="continue-section hidden">
+      <div class="continue-header">
+        <h3>Tiếp tục xem</h3>
+        <button id="clear-continue-btn" class="text-btn" type="button">Xóa lịch sử</button>
+      </div>
+      <div id="continue-rail" class="continue-rail">
+        <!-- Rendered dynamically -->
+      </div>
+    </section>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <!-- 1. Home Multi-Section View -->
+      <div id="home-view" class="home-view">
+        <div id="home-sections-container">
+          <!-- Dynamically populated sections: Chiếu Rạp 2026, Phim Bộ Đang Hot, Thuyết Minh & Lồng Tiếng, Phim Lẻ Đỉnh Cao, Anime Hot -->
+          <div class="home-section-skeleton"></div>
+          <div class="home-section-skeleton"></div>
+          <div class="home-section-skeleton"></div>
+        </div>
+      </div>
+
+      <!-- 2. Category / Search Grid View (When browsing a specific category or searching) -->
+      <div id="grid-view" class="grid-view hidden">
+        <div class="section-header">
+          <div class="section-title-wrap">
+            <h2 id="section-title">Danh Sách Phim</h2>
+            <span id="result-count" class="result-count"></span>
+          </div>
+
+          <div class="section-controls">
+            <!-- Audio Filter Sub-pills -->
+            <div class="audio-filter-pills">
+              <button class="audio-pill active" data-filter="all">Tất cả định dạng</button>
+              <button class="audio-pill pill-tm" data-filter="thuyetminh">Thuyết Minh</button>
+              <button class="audio-pill pill-lt" data-filter="longtieng">Lồng Tiếng</button>
+              <button class="audio-pill pill-cr" data-filter="chieurap">Chiếu Rạp</button>
+            </div>
+
+            <!-- Cinema View Mode Switcher -->
+            <div class="view-mode-toggle">
+              <button id="view-grid-btn" class="view-btn active" title="Hiển thị dạng Poster chuẩn">
+                Poster
+              </button>
+              <button id="view-cinema-btn" class="view-btn" title="Hiển thị dạng Cinema Widescreen 16:9">
+                Cinema 16:9
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Movie Grid Container -->
+        <div id="movie-grid" class="movie-grid view-poster">
+          <!-- Skeletons -->
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+          <div class="skeleton-card"></div>
+        </div>
+
+        <!-- Pagination -->
+        <div class="pagination-bar">
+          <button id="prev-page-btn" class="page-btn hidden" type="button">← Trang trước</button>
+          <span id="page-indicator" class="page-indicator hidden">Trang 1</span>
+          <button id="next-page-btn" class="page-btn hidden" type="button">Trang sau →</button>
+        </div>
+      </div>
+    </main>
+
+    <!-- Detail & Episode Modal -->
+    <div id="movie-modal" class="modal-overlay hidden">
+      <div class="modal-content">
+        <button id="modal-close-btn" class="modal-close" title="Đóng (Esc)" type="button" aria-label="Đóng">&times;</button>
+        
+        <div class="modal-body">
+          <div class="modal-backdrop-wrap">
+            <img id="modal-backdrop-img" src="" alt="Backdrop">
+            <div class="modal-backdrop-grad"></div>
+          </div>
+
+          <div class="modal-detail-row">
+            <div class="modal-poster-wrap">
+              <img id="modal-poster" src="" alt="Poster" onerror="this.src='icons/icon128.png'">
+            </div>
+            
+            <div class="modal-info">
+              <div class="modal-title-row">
+                <h2 id="modal-title">Tên Phim</h2>
+                <button id="modal-fav-btn" class="modal-fav-btn" title="Thêm vào danh sách của tôi" type="button">+ Danh sách</button>
+              </div>
+              <div id="modal-origin" class="modal-origin">Original Name</div>
+              
+              <div class="modal-badges">
+                <span id="modal-year" class="badge">2026</span>
+                <span id="modal-quality" class="badge badge-accent">FHD</span>
+                <span id="modal-rating" class="badge badge-rating">8.8</span>
+                <span id="modal-current-ep" class="badge badge-info">Full</span>
+                <span id="modal-source-badge" class="badge badge-source">VIP</span>
+              </div>
+
+              <div id="modal-meta" class="modal-meta">
+                <span id="modal-time">120 phút</span>
+                <span id="modal-genres">Hành động, Phiêu lưu</span>
+                <span id="modal-countries">Âu Mỹ</span>
+              </div>
+              
+              <p id="modal-desc" class="modal-desc">Mô tả phim...</p>
+
+              <!-- Episodes Section with Multi-Server Switcher -->
+              <div class="episodes-section">
+                <div class="episodes-header">
+                  <h3>Chọn bản phát nổi (Float Window):</h3>
+                  <div id="server-tabs" class="server-tabs">
+                    <!-- Audio & Server tabs rendered here: Vietsub, Thuyết Minh, Lồng Tiếng -->
+                  </div>
+                </div>
+                <div id="episodes-grid" class="episodes-grid">
+                  <!-- Episode buttons rendered here -->
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <!-- Direct Stream URL Modal -->
+    <div id="direct-stream-modal" class="modal-overlay hidden">
+      <div class="modal-content" style="max-width: 520px;">
+        <button id="direct-modal-close-btn" class="modal-close" type="button" aria-label="Đóng">&times;</button>
+        <div style="padding: 28px;">
+          <h2 style="font-size: 18px; font-weight: 700; margin-bottom: 6px; display: flex; align-items: center; gap: 8px;">
+            Dán link stream phát nổi
+          </h2>
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5;">
+            Phát nổi mọi luồng HLS (.m3u8), video MP4, luồng Twitch, hoặc link nhúng iframe trực tiếp đè lên màn hình Cursor / Terminal.
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 12px;">
+            <div>
+              <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">Tiêu đề video</label>
+              <input type="text" id="direct-title-input" placeholder="Ví dụ: Lofi Chill Coding, Bài giảng AI..." style="width: 100%; box-sizing: border-box; padding: 10px 14px; background: #252533; border: 1px solid var(--border); border-radius: 8px; color: #fff; outline: none; font-size: 13px;">
+            </div>
+            <div>
+              <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-weight: 600;">Link stream hoặc embed</label>
+              <input type="text" id="direct-url-input" placeholder="https://example.com/playlist.m3u8 hoặc https://www.youtube.com/watch?v=..." style="width: 100%; box-sizing: border-box; padding: 10px 14px; background: #252533; border: 1px solid var(--border); border-radius: 8px; color: #fff; outline: none; font-size: 13px;">
+            </div>
+            <button id="btn-submit-direct-float" class="modal-float-cta-btn" style="padding: 12px; font-size: 13px; font-weight: 700; margin-top: 8px; cursor: pointer;" type="button">
+              Phát nổi trên màn hình
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="movie-service.js"></script>
+  <script src="catalog.js"></script>
+</body>
+</html>

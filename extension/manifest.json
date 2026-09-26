@@ -7,11 +7,25 @@
     "activeTab",
     "nativeMessaging",
     "scripting",
-    "cookies"
+    "cookies",
+    "storage"
   ],
   "host_permissions": [
     "https://*.youtube.com/*",
-    "https://*.google.com/*"
+    "https://*.google.com/*",
+    "https://*.tiktok.com/*",
+    "https://*.tiktokv.com/*",
+    "https://*.tiktokcdn.com/*",
+    "https://*.byteoversea.com/*",
+    "https://phimapi.com/*",
+    "https://*.phimapi.com/*",
+    "https://ophim1.com/*",
+    "https://*.ophim1.com/*",
+    "https://phim.nguonc.com/*",
+    "https://*.nguonc.com/*",
+    "https://*.streamc.xyz/*",
+    "https://phimimg.com/*",
+    "https://*/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -20,6 +34,7 @@
     {
       "matches": [
         "*://*.youtube.com/*",
+        "*://*.tiktok.com/*",
         "*://*.bilibili.com/*",
         "*://*.youku.com/*",
         "*://*.iqiyi.com/*",

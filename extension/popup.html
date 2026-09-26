@@ -1,31 +1,169 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="vi" style="color-scheme: dark">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FullFloatPiP - VibeWatch Cinema & TikTok VN</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
   <div class="container">
+    <!-- Header -->
     <header class="header">
       <div class="logo">
-        <span class="logo-icon">🎬</span>
-        <h1>FullFloatPiP</h1>
+        <div class="logo-icon">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+            <path d="M18 3v2h-2V3H8v2H6V3H4v18h2v-2h2v2h8v-2h2v2h2V3h-2zM8 17H6v-2h2v2zm0-4H6v-2h2v2zm0-4H6V7h2v2zm10 8h-2v-2h2v2zm0-4h-2v-2h2v2zm0-4h-2V7h2v2z"/>
+          </svg>
+        </div>
+        <div class="logo-text">
+          <h1>FullFloatPiP <span class="logo-badge">CINEMA</span></h1>
+          <p class="subtitle">Phát nổi đè lên Cursor, VSCode, Terminal & Spaces</p>
+        </div>
+        <button id="popup-ghost-btn" class="popup-ghost-btn active" title="Xuyên chuột: bấm xuyên qua phim để gõ code bên dưới. Thanh điều khiển vẫn bấm được. ⌘⇧G" type="button" aria-pressed="true">Xuyên chuột: Bật</button>
       </div>
-      <p class="subtitle">PiP that floats over fullscreen</p>
     </header>
 
-    <div id="video-list" class="video-list">
-      <div class="loading">
-        <div class="spinner"></div>
-        <span>Detecting videos...</span>
+    <!-- Tab Switcher -->
+    <div class="popup-tabs">
+      <button id="tab-web" class="tab-btn">Tab Web</button>
+      <button id="tab-movies" class="tab-btn active">Kho Phim</button>
+      <button id="tab-tiktok" class="tab-btn">TikTok VN</button>
+      <button id="tab-recent" class="tab-btn">Lịch Sử</button>
+    </div>
+
+    <!-- Panel 1: Current Tab Web Video -->
+    <div id="panel-web" class="tab-panel">
+      <div id="video-list" class="video-list">
+        <div class="loading">
+          <div class="spinner"></div>
+          <span>Đang tìm video trên tab hiện tại...</span>
+        </div>
       </div>
     </div>
 
+    <!-- Panel 2: VibeWatch Cinema Movies Hub -->
+    <div id="panel-movies" class="tab-panel active">
+      <!-- Continue Watching strip (Netflix loop) -->
+      <div id="popup-continue-strip" class="popup-continue-strip hidden">
+        <div class="popup-continue-header">
+          <span>Tiếp tục xem</span>
+          <button type="button" id="popup-goto-recent" class="text-link-btn">Lịch sử</button>
+        </div>
+        <div id="popup-continue-rail" class="popup-continue-rail"></div>
+      </div>
+
+      <!-- Search Bar -->
+      <div class="movie-quick-search">
+        <svg class="search-ico" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="11" cy="11" r="8"></circle>
+          <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
+        </svg>
+        <input type="text" id="popup-movie-search" placeholder="Tìm phim, diễn viên..." autocomplete="off">
+        <button id="popup-search-clear" class="search-clear-btn hidden" type="button" aria-label="Xóa tìm kiếm" title="Xóa tìm kiếm">&times;</button>
+      </div>
+
+      <!-- Category Filter Chips -->
+      <div class="popup-filter-chips">
+        <button class="chip-btn chip-lofi" id="btn-lofi-coding" type="button" title="Phát nổi Lofi Girl 24/7 qua YouTube">Lofi coding</button>
+        <button class="chip-btn active" data-cat="moi">Trang chủ</button>
+        <button class="chip-btn chip-fav" data-cat="favorites">Danh sách</button>
+        <button class="chip-btn chip-cinema" data-cat="chieurap">Chiếu rạp</button>
+        <button class="chip-btn chip-tm" data-cat="thuyetminh">Thuyết minh</button>
+        <button class="chip-btn chip-lt" data-cat="longtieng">Lồng tiếng</button>
+        <button class="chip-btn" data-cat="bo">Phim bộ</button>
+        <button class="chip-btn" data-cat="le">Phim lẻ</button>
+        <button class="chip-btn" data-cat="hoathinh">Anime</button>
+        <button class="chip-btn chip-live" data-cat="livetv">Truyền hình</button>
+      </div>
+
+      <!-- Actions Bar -->
+      <div class="movie-panel-actions">
+        <button id="btn-open-catalog" class="catalog-btn" title="Mở VibeWatch Cinema — billboard, rails, tìm kiếm. Trong PiP: Tập sau tự động / Bỏ qua GT.">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 3 21 3 21 9"></polyline>
+            <polyline points="9 21 3 21 3 15"></polyline>
+            <line x1="21" y1="3" x2="14" y2="10"></line>
+            <line x1="3" y1="21" x2="10" y2="14"></line>
+          </svg>
+          Mở Cinema đầy đủ
+        </button>
+        <select id="popup-source-select" class="source-mini-select" title="Chọn nguồn phim">
+          <option value="all" selected>Đa nguồn</option>
+          <option value="kkphim">KKPhim</option>
+          <option value="nguonc">NguonC</option>
+        </select>
+      </div>
+      <p class="popup-playback-hint">Phát nổi · Tập sau tự động · Bỏ qua GT trong PiP</p>
+
+      <!-- Movies Grid / List -->
+      <div id="popup-movie-list" class="popup-movie-list">
+        <div class="loading">
+          <div class="spinner"></div>
+          <span>Đang tải danh sách phim...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Panel 3: TikTok Vietnam (Infinite Scroll PiP) -->
+    <div id="panel-tiktok" class="tab-panel">
+      <!-- Main Infinite Scroll Launcher -->
+      <div class="tiktok-hero-card">
+        <div class="tiktok-hero-content">
+          <div class="tiktok-hero-title">TikTok Việt Nam Cuộn Vô Hạn</div>
+          <div class="tiktok-hero-sub">Phát nổi cửa sổ dọc 9:16 trên macOS. Lướt video liên tục bằng con lăn chuột hoặc phím mũi tên.</div>
+        </div>
+        <button id="tiktok-hero-launch-btn" class="tiktok-hero-btn" type="button">
+          Phát Nổi Ngay
+        </button>
+      </div>
+
+      <!-- Quick Paste Bar -->
+      <div class="tiktok-quick-bar">
+        <input type="text" id="tiktok-url-input" placeholder="Dán link TikTok (video, profile, vt.tiktok.com)..." autocomplete="off" spellcheck="false">
+        <button id="tiktok-paste-btn" class="tiktok-btn-paste" title="Dán từ Clipboard" type="button">Dán</button>
+        <button id="tiktok-float-btn" class="tiktok-btn-float" title="Phát nổi PiP" type="button">Phát PiP</button>
+      </div>
+
+      <!-- Feed Topics -->
+      <div class="tiktok-topics-section">
+        <div class="tiktok-section-label">Chủ đề thịnh hành</div>
+        <div class="tiktok-topic-pills">
+          <button class="tiktok-topic-btn active" data-url="https://www.tiktok.com/foryou?lang=vi-VN">Dành cho bạn</button>
+          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/explore">Khám phá</button>
+          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=tin%20tuc%20viet%20nam">Tin tức VN</button>
+          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=review%20phim%20chieu%20rap">Review Phim</button>
+          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=cong%20nghe%20viet%20nam">Công nghệ</button>
+          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=am%20thuc%20viet%20nam">Ẩm thực</button>
+          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=hai%20huoc%20viet%20nam">Hài hước</button>
+        </div>
+      </div>
+
+      <div class="tiktok-web-link-row">
+        <button id="btn-open-tiktok-web" class="tiktok-web-link" type="button">
+          Mở TikTok VN trên tab trình duyệt ↗
+        </button>
+      </div>
+    </div>
+
+    <!-- Panel 4: Continue Watching / Recent -->
+    <div id="panel-recent" class="tab-panel">
+      <div class="recent-header">
+        <span>Lịch sử xem gần đây</span>
+        <button id="btn-clear-recent" class="clear-recent-btn" type="button">Xóa lịch sử</button>
+      </div>
+      <div id="recent-list" class="recent-list">
+        <div class="empty-recent">Chưa có lịch sử xem phim. Hãy chọn một phim để phát nổi!</div>
+      </div>
+    </div>
+
+    <!-- Footer -->
     <footer class="footer">
-      <p>Supports YouTube · Bilibili · Youku · iQiyi & more</p>
+      <span>YouTube · TikTok VN · KKPhim · NguonC · Twitch · Always-On-Top</span>
     </footer>
   </div>
+
+  <script src="movie-service.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

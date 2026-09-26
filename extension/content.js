@@ -54,6 +54,21 @@
         youtube: () =>
           document.querySelector('h1.ytd-watch-metadata yt-formatted-string')?.textContent
           || document.querySelector('#title h1')?.textContent,
+        tiktok: () => {
+          const desc = document.querySelector('[data-e2e="browse-video-desc"]')
+            || document.querySelector('[data-e2e="video-desc"]')
+            || document.querySelector('h1[data-e2e="user-post-item-desc"]')
+            || document.querySelector('span[data-e2e="search-card-video-caption"]')
+            || document.querySelector('div[class*="DivTextContainer"]');
+          const author = document.querySelector('[data-e2e="browse-user-avatar"]')?.nextElementSibling?.textContent
+            || document.querySelector('[data-e2e="video-author-uniqueid"]')?.textContent
+            || document.querySelector('h3[data-e2e="user-title"]')?.textContent;
+          const text = desc?.textContent?.trim() || '';
+          const user = author?.trim() || '';
+          if (user && text) return `@${user}: ${text.slice(0, 60)}`;
+          if (text) return text.slice(0, 70);
+          return document.title || 'TikTok Video';
+        },
         bilibili: () =>
           document.querySelector('.video-title')?.textContent
           || document.querySelector('h1[title]')?.textContent
@@ -80,6 +95,13 @@
         case 'youtube': {
           // YouTube embed triggers Error 153 in WKWebView,
           // so we load the watch page directly + JS injection to isolate the video
+          return null;
+        }
+        case 'tiktok': {
+          const idMatch = url.match(/\/video\/(\d+)/) || url.match(/\/v\/(\d+)/);
+          if (idMatch) {
+            return `https://www.tiktok.com/player/v1/${idMatch[1]}`;
+          }
           return null;
         }
         case 'bilibili': {
@@ -118,6 +140,7 @@
     _detectSite() {
       const host = window.location.hostname;
       if (host.includes('youtube.com')) return 'youtube';
+      if (host.includes('tiktok.com')) return 'tiktok';
       if (host.includes('bilibili.com')) return 'bilibili';
       if (host.includes('youku.com')) return 'youku';
       if (host.includes('iqiyi.com')) return 'iqiyi';
