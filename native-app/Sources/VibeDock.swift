@@ -237,7 +237,7 @@ final class VibeDock {
         userHoldUntil = nil
         userHoldCoarse = nil
         timer?.invalidate()
-        let timer = Timer(timeInterval: 0.35, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.7, repeats: true) { [weak self] _ in
             self?.tick()
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -273,6 +273,7 @@ final class VibeDock {
 
     private func applyPlacement(to window: FloatWindow, animated: Bool, force: Bool,
                                 scannedObstacles: [WeightedObstacle]? = nil) {
+        guard !window.isPinned else { return }
         guard let screen = window.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         let obstacles = (scannedObstacles ?? scanWeightedObstacles()).filter {
@@ -652,6 +653,24 @@ final class VibeHotkeys {
         register(id: 14, key: UInt32(kVK_ANSI_2), mods: ctrlOpt, label: "⌃⌥2")
         register(id: 15, key: UInt32(kVK_ANSI_3), mods: ctrlOpt, label: "⌃⌥3")
     }
+
+    /// Releases every registered hotkey and tears the event handler down. Called
+    /// when the floating window closes: these combinations (⌘⇧G, ⌘⇧B, ⌘⇧D, …)
+    /// belong to whatever app is frontmost — Xcode's "Find Previous", Chrome's
+    /// find bar — and must not stay swallowed while no player is on screen.
+    func uninstall() {
+        for ref in hotKeyRefs {
+            if let ref = ref { UnregisterEventHotKey(ref) }
+        }
+        hotKeyRefs.removeAll()
+        if let handler = handler {
+            RemoveEventHandler(handler)
+            self.handler = nil
+        }
+        actions.removeAll()
+    }
+
+    var isInstalled: Bool { !hotKeyRefs.isEmpty }
 
     private func register(id: UInt32, key: UInt32, mods: UInt32, label: String) {
         var ref: EventHotKeyRef?

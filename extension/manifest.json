@@ -12,11 +12,6 @@
   ],
   "host_permissions": [
     "https://*.youtube.com/*",
-    "https://*.google.com/*",
-    "https://*.tiktok.com/*",
-    "https://*.tiktokv.com/*",
-    "https://*.tiktokcdn.com/*",
-    "https://*.byteoversea.com/*",
     "https://phimapi.com/*",
     "https://*.phimapi.com/*",
     "https://ophim1.com/*",
@@ -24,7 +19,8 @@
     "https://phim.nguonc.com/*",
     "https://*.nguonc.com/*",
     "https://*.streamc.xyz/*",
-    "https://phimimg.com/*"
+    "https://phimimg.com/*",
+    "*://*/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -32,20 +28,35 @@
   "content_scripts": [
     {
       "matches": [
-        "*://*.youtube.com/*",
-        "*://*.tiktok.com/*",
-        "*://*.bilibili.com/*",
-        "*://*.youku.com/*",
-        "*://*.iqiyi.com/*",
-        "*://*.netflix.com/*",
-        "*://*.v.qq.com/*",
-        "*://*.douyin.com/*",
-        "*://*.twitch.tv/*"
+        "<all_urls>"
       ],
+      "all_frames": true,
       "js": [
+        "sub-interceptor.js"
+      ],
+      "world": "MAIN",
+      "run_at": "document_start"
+    },
+    {
+      "matches": [
+        "<all_urls>"
+      ],
+      "all_frames": true,
+      "js": [
+        "ai-dubbing.js",
         "content.js"
       ],
       "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "sub-interceptor.js"
+      ],
+      "matches": [
+        "<all_urls>"
+      ]
     }
   ],
   "action": {

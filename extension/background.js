@@ -4,6 +4,18 @@ importScripts('movie-service.js');
 
 const NATIVE_HOST_NAME = 'com.aspect.floatvideo';
 
+// Only these YouTube cookies travel to the native float window. They are what an
+// authenticated watch page needs; everything else (analytics, consent, and the
+// whole .google.com jar we used to copy) stays in the browser. The native side
+// re-checks this list, so widening it here alone is not enough.
+const YOUTUBE_SESSION_COOKIE_NAMES = new Set([
+    'SID', 'HSID', 'SSID', 'APISID', 'SAPISID', 'SIDCC', 'LOGIN_INFO',
+    '__Secure-1PSID', '__Secure-3PSID',
+    '__Secure-1PAPISID', '__Secure-3PAPISID',
+    '__Secure-1PSIDTS', '__Secure-3PSIDTS',
+    '__Secure-1PSIDCC', '__Secure-3PSIDCC',
+]);
+
 class FloatVideoManager {
     constructor() {
         this.nativePort = null;
@@ -77,30 +89,14 @@ class FloatVideoManager {
             return { success: false, error: 'Native app not connected. Please run install.sh first.' };
         }
 
-        // Resolve short TikTok links (vt.tiktok.com)
-        if (videoInfo.pageUrl && (videoInfo.pageUrl.includes('vt.tiktok.com') || videoInfo.pageUrl.includes('vm.tiktok.com'))) {
-            try {
-                const res = await fetch(videoInfo.pageUrl, { method: 'HEAD', redirect: 'follow' });
-                if (res.url && res.url !== videoInfo.pageUrl) {
-                    videoInfo.pageUrl = res.url;
-                    const idMatch = res.url.match(/\/video\/(\d+)/);
-                    if (idMatch && !videoInfo.embedUrl) {
-                        videoInfo.embedUrl = `https://www.tiktok.com/player/v1/${idMatch[1]}`;
-                    }
-                }
-            } catch (e) {
-                console.warn('[FloatVideo] Failed to resolve short TikTok url:', e);
-            }
-        }
-
         // Proportional fit into viewport preserving aspect ratio
-        const origW = videoInfo.width || (videoInfo.site === 'tiktok' ? 340 : 640);
-        const origH = videoInfo.height || (videoInfo.site === 'tiktok' ? 604 : 360);
+        const origW = videoInfo.width || 640;
+        const origH = videoInfo.height || 360;
         const ratio = origW / origH;
         let w, h;
 
-        if (videoInfo.site === 'tiktok' || ratio < 0.8) {
-            // Vertical smartphone window (9:16) for TikTok / Reels / Shorts
+        if (ratio < 0.8) {
+            // Vertical smartphone window (9:16) for Reels / Shorts
             w = 340;
             const targetRatio = (ratio > 0.3 && ratio < 1.0) ? ratio : (9 / 16);
             h = Math.round(w / targetRatio);
@@ -136,6 +132,9 @@ class FloatVideoManager {
         if (videoInfo.focusSession) {
             message.focusSession = true;
         }
+        if (videoInfo.aiDubEnabled) {
+            message.aiDubEnabled = true;
+        }
 
         // Player settings captured from the tab (captions/translate, rate,
         // sticky yt-player-* localStorage) — mirrored into the float window.
@@ -143,21 +142,23 @@ class FloatVideoManager {
             message.playerPrefs = playerPrefs;
         }
 
-        // Get YouTube cookies and attach to the message
+        // Mirror only the YouTube session cookies the float window needs. This
+        // used to also copy the entire .google.com jar and to forward domain /
+        // path, which let the payload declare where its cookies landed. The
+        // native side cannot honour httpOnly (HTTPCookiePropertyKey has no such
+        // key), so the narrower the set, the smaller the blast radius. Never
+        // widen this without re-reading docs/security-review.md.
         if (videoInfo.site === 'youtube') {
             try {
                 const ytCookies = await chrome.cookies.getAll({ domain: '.youtube.com' });
-                const googleCookies = await chrome.cookies.getAll({ domain: '.google.com' });
-                const allCookies = [...ytCookies, ...googleCookies];
-                message.cookies = allCookies.map(c => ({
-                    name: c.name,
-                    value: c.value,
-                    domain: c.domain,
-                    path: c.path,
-                    secure: c.secure,
-                    httpOnly: c.httpOnly,
-                }));
-                console.log(`[FloatVideo] Sending ${message.cookies.length} cookies`);
+                message.cookies = ytCookies
+                    .filter(c => YOUTUBE_SESSION_COOKIE_NAMES.has(c.name))
+                    .map(c => ({
+                        name: c.name,
+                        value: c.value,
+                        secure: c.secure,
+                    }));
+                console.log(`[FloatVideo] Sending ${message.cookies.length} session cookies`);
             } catch (e) {
                 console.warn('[FloatVideo] Failed to get cookies:', e);
                 message.cookies = [];
@@ -343,9 +344,86 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
         case 'FLOAT_VIDEO_REQUEST': {
             (async () => {
+                if (message.videoInfo && message.videoInfo.aiDubEnabled === undefined) {
+                    try {
+                        const stored = await chrome.storage.local.get('vibe_ai_dubbing_enabled');
+                        message.videoInfo.aiDubEnabled = stored.vibe_ai_dubbing_enabled != null
+                            ? Boolean(stored.vibe_ai_dubbing_enabled)
+                            : true;
+                    } catch (e) {
+                        message.videoInfo.aiDubEnabled = true;
+                    }
+                }
                 const result = await manager.floatVideo(message.videoInfo, message.playerPrefs || null);
+                if (result && result.success) {
+                    const targetTabId = sender?.tab?.id || message.tabId;
+                    if (targetTabId) {
+                        chrome.tabs.sendMessage(targetTabId, { type: 'FLOAT_PAUSE' }).catch(() => {});
+                    }
+                }
                 sendResponse(result);
             })();
+            return true;
+        }
+
+        case 'SPEAK_AI_DUB': {
+            (async () => {
+                if (!manager.nativePort) manager.connectNative();
+                if (manager.nativePort) {
+                    manager.nativePort.postMessage({
+                        action: 'speakAIDub',
+                        text: message.text,
+                        duration: message.duration || 0,
+                        gender: message.gender || 'female'
+                    });
+                    sendResponse({ success: true });
+                } else {
+                    sendResponse({ success: false, error: 'Native app not connected' });
+                }
+            })();
+            return true;
+        }
+
+        case 'STOP_AI_DUB': {
+            if (manager.nativePort) {
+                manager.nativePort.postMessage({ action: 'stopAIDub' });
+            }
+            sendResponse({ success: true });
+            break;
+        }
+
+        case 'PREFETCH_AI_DUB': {
+            if (!manager.nativePort) manager.connectNative();
+            if (manager.nativePort && message.text) {
+                manager.nativePort.postMessage({
+                    action: 'prefetchAIDub',
+                    text: message.text
+                });
+            }
+            sendResponse({ success: true });
+            break;
+        }
+
+        case 'PREFETCH_BATCH_AI_DUB': {
+            if (!manager.nativePort) manager.connectNative();
+            if (manager.nativePort && Array.isArray(message.texts) && message.texts.length > 0) {
+                manager.nativePort.postMessage({
+                    action: 'prefetchBatchAIDub',
+                    texts: message.texts
+                });
+            }
+            sendResponse({ success: true });
+            break;
+        }
+
+        case 'SET_AI_DUB_VOICE': {
+            if (manager.nativePort) {
+                manager.nativePort.postMessage({
+                    action: 'setDubVoice',
+                    voice: message.voice || message.gender
+                });
+            }
+            sendResponse({ success: true });
             break;
         }
 
@@ -429,6 +507,7 @@ chrome.commands.onCommand.addListener(async (command, tab) => {
         const result = await manager.floatVideo(video, null);
         if (!result?.success) throw new Error(result?.error || 'Unable to open player');
         await chrome.tabs.sendMessage(tab.id, { type: 'FLOAT_VIDEO', videoIndex: video.index }).catch(() => {});
+        await chrome.tabs.sendMessage(tab.id, { type: 'FLOAT_PAUSE' }).catch(() => {});
         await chrome.action.setTitle({ tabId: tab.id, title: 'VibeFloat · Đang phát nổi' });
     } catch (error) {
         console.warn('[FloatVideo] Shortcut failed:', error);

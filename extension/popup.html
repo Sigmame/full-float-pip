@@ -12,54 +12,117 @@
     <header class="header">
       <div class="logo">
         <div class="brand-lockup">
-          <img class="logo-icon" src="icons/icon128.png" width="40" height="40" alt="">
+          <img class="logo-icon" src="icons/icon128.png" width="38" height="38" alt="VibeFloat">
           <div class="logo-text">
-            <h1>VibeFloat</h1>
-            <p class="subtitle">Xem trong lúc code</p>
+            <div class="logo-title-wrap">
+              <h1>VibeFloat</h1>
+              <span class="logo-badge">PRO</span>
+            </div>
+            <p class="subtitle">Video & Phim nổi trên mọi ứng dụng</p>
           </div>
         </div>
-        <button id="popup-ghost-btn" class="popup-ghost-btn active" title="Bấm xuyên qua phim để gõ code bên dưới. ⌘⇧G" type="button" aria-label="Xuyên chuột: Bật" aria-pressed="true">
-          <span>Xuyên chuột</span><span class="ghost-state">Bật</span>
-        </button>
+        <div class="header-actions">
+          <div id="native-status" class="native-status status-unknown" title="Trạng thái kết nối Native Companion App">
+            <span class="status-dot"></span>
+            <span class="status-text">Native: Sẵn sàng</span>
+          </div>
+          <button id="popup-aidub-btn" class="popup-aidub-btn active" title="Lồng tiếng Edge AI từ phụ đề (Shift+V)" type="button" aria-label="Lồng tiếng AI: Bật" aria-pressed="true">
+            <svg class="aidub-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="22"/>
+            </svg>
+            <span>Lồng tiếng AI</span>
+            <span class="aidub-state">Bật</span>
+          </button>
+          <button id="popup-ghost-btn" class="popup-ghost-btn active" title="Bấm xuyên qua phim để gõ code bên dưới (⌘⇧G)" type="button" aria-label="Xuyên chuột: Bật" aria-pressed="true">
+            <svg class="ghost-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 2a5 5 0 0 0-5 5v12a2 2 0 0 0 3.5 1.5L12 19l1.5 1.5A2 2 0 0 0 17 19V7a5 5 0 0 0-5-5z"/>
+            </svg>
+            <span>Xuyên chuột</span>
+            <span class="ghost-state">Bật</span>
+          </button>
+        </div>
       </div>
     </header>
 
     <!-- Tab Switcher -->
     <div class="popup-tabs" role="tablist" aria-label="Nguồn video">
-      <button id="tab-web" class="tab-btn active" role="tab" aria-controls="panel-web" aria-selected="true" tabindex="0">Video tab</button>
-      <button id="tab-movies" class="tab-btn" role="tab" aria-controls="panel-movies" aria-selected="false" tabindex="-1">Kho phim</button>
-      <button id="tab-tiktok" class="tab-btn" role="tab" aria-controls="panel-tiktok" aria-selected="false" tabindex="-1">TikTok</button>
-      <button id="tab-recent" class="tab-btn" role="tab" aria-controls="panel-recent" aria-selected="false" tabindex="-1">Đã xem</button>
+      <button id="tab-web" class="tab-btn active" role="tab" aria-controls="panel-web" aria-selected="true" tabindex="0">
+        <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/></svg>
+        <span>Video tab</span>
+        <span id="web-badge" class="tab-badge hidden">0</span>
+      </button>
+      <button id="tab-movies" class="tab-btn" role="tab" aria-controls="panel-movies" aria-selected="false" tabindex="-1">
+        <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M7 3v18"/><path d="M3 7.5h4"/><path d="M3 12h18"/><path d="M3 16.5h4"/><path d="M17 3v18"/><path d="M17 7.5h4"/><path d="M17 16.5h4"/></svg>
+        <span>Kho phim</span>
+      </button>
+      <button id="tab-recent" class="tab-btn" role="tab" aria-controls="panel-recent" aria-selected="false" tabindex="-1">
+        <svg class="tab-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        <span>Đã xem</span>
+        <span id="recent-badge" class="tab-badge hidden">0</span>
+      </button>
     </div>
 
     <!-- Panel 1: Current Tab Web Video -->
     <div id="panel-web" class="tab-panel active" role="tabpanel" aria-labelledby="tab-web">
+      <!-- Quick Direct Float Bar -->
+      <div class="quick-float-box">
+        <div class="quick-float-label">Phát nhanh link bất kỳ</div>
+        <div class="quick-float-row">
+          <input type="text" id="direct-url-input" placeholder="Dán link YouTube, stream m3u8, video..." autocomplete="off" spellcheck="false">
+          <button id="btn-direct-paste" class="btn-paste" title="Dán từ Clipboard" type="button">Dán</button>
+          <button id="btn-direct-float" class="btn-float-action" type="button">Phát</button>
+        </div>
+      </div>
+
       <div class="web-panel-heading">
         <div>
           <h2>Video trong tab hiện tại</h2>
           <p id="web-status" role="status" aria-live="polite">Đang tìm video…</p>
         </div>
-        <button id="web-rescan-btn" class="web-rescan-btn" type="button">Quét lại</button>
+        <button id="web-rescan-btn" class="web-rescan-btn" type="button">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/></svg>
+          Quét lại
+        </button>
       </div>
+
       <div id="video-list" class="video-list">
         <div class="loading">
           <div class="spinner"></div>
           <span>Đang tìm video trên tab hiện tại...</span>
         </div>
       </div>
+
       <div class="shortcut-row">
-        <span>Phát nổi nhanh <kbd id="float-shortcut">⌃⇧Y</kbd></span>
+        <span>Phát nổi nhanh video đang xem: <kbd id="float-shortcut">⌃⇧Y</kbd></span>
         <button id="change-shortcut-btn" type="button">Đổi phím</button>
       </div>
     </div>
 
     <!-- Panel 2: VibeWatch Cinema Movies Hub -->
     <div id="panel-movies" class="tab-panel" role="tabpanel" aria-labelledby="tab-movies">
+      <!-- Lofi Coding Focus Station Hero -->
+      <div class="lofi-hero-banner" id="lofi-hero-banner">
+        <div class="lofi-hero-content">
+          <div class="lofi-hero-tag">
+            <span class="lofi-dot"></span>
+            <span>FOCUS STATION</span>
+          </div>
+          <div class="lofi-hero-title">Lofi Coding Xuyên Màn Đêm</div>
+          <div class="lofi-hero-desc">Nhạc nền chill không lời, tự bật xuyên chuột để code tập trung</div>
+        </div>
+        <button id="btn-lofi-coding" class="lofi-hero-action" type="button" title="Phát nổi Lofi coding ngay">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span>Phát Lofi</span>
+        </button>
+      </div>
+
       <!-- Continue Watching strip (Netflix loop) -->
       <div id="popup-continue-strip" class="popup-continue-strip hidden">
         <div class="popup-continue-header">
           <span>Tiếp tục xem</span>
-          <button type="button" id="popup-goto-recent" class="text-link-btn">Lịch sử</button>
+          <button type="button" id="popup-goto-recent" class="text-link-btn">Xem tất cả ↗</button>
         </div>
         <div id="popup-continue-rail" class="popup-continue-rail"></div>
       </div>
@@ -70,13 +133,12 @@
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
-        <input type="text" id="popup-movie-search" placeholder="Tìm phim, diễn viên..." autocomplete="off">
+        <input type="text" id="popup-movie-search" placeholder="Tìm phim, diễn viên (gõ / để tìm nhanh)..." autocomplete="off">
         <button id="popup-search-clear" class="search-clear-btn hidden" type="button" aria-label="Xóa tìm kiếm" title="Xóa tìm kiếm">&times;</button>
       </div>
 
       <!-- Category Filter Chips -->
       <div class="popup-filter-chips">
-        <button class="chip-btn chip-lofi" id="btn-lofi-coding" type="button" title="Nhạc không lời, cửa sổ nhỏ, xuyên chuột, hạ tiếng để code tiếp">Nhạc nền</button>
         <button class="chip-btn active" data-cat="moi">Trang chủ</button>
         <button class="chip-btn chip-fav" data-cat="favorites">Danh sách</button>
         <button class="chip-btn chip-cinema" data-cat="chieurap">Chiếu rạp</button>
@@ -90,22 +152,24 @@
 
       <!-- Actions Bar -->
       <div class="movie-panel-actions">
-        <button id="btn-open-catalog" class="catalog-btn" title="Mở kho phim. Trong cửa sổ nổi: Tập sau tự động và bỏ qua giới thiệu.">
+        <button id="btn-open-catalog" class="catalog-btn" title="Mở kho phim toàn màn hình với giao diện Netflix cinema">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 3 21 3 21 9"></polyline>
             <polyline points="9 21 3 21 3 15"></polyline>
             <line x1="21" y1="3" x2="14" y2="10"></line>
             <line x1="3" y1="21" x2="10" y2="14"></line>
           </svg>
-          Xem toàn bộ kho
+          Mở kho phim lớn ↗
         </button>
         <select id="popup-source-select" class="source-mini-select" title="Chọn nguồn phim">
           <option value="all" selected>Đa nguồn</option>
           <option value="kkphim">KKPhim</option>
           <option value="nguonc">NguonC</option>
+          <option value="thuyetminh">Thuyết minh</option>
+          <option value="longtieng">Lồng tiếng</option>
         </select>
       </div>
-      <p class="popup-playback-hint">Phát nổi · Tập sau tự động · Bỏ qua GT trong PiP</p>
+      <p class="popup-playback-hint">Phát nổi NSPanel · Tự chuyển tập & Bỏ qua intro thông minh</p>
 
       <!-- Movies Grid / List -->
       <div id="popup-movie-list" class="popup-movie-list">
@@ -116,52 +180,14 @@
       </div>
     </div>
 
-    <!-- Panel 3: TikTok Vietnam (Infinite Scroll PiP) -->
-    <div id="panel-tiktok" class="tab-panel" role="tabpanel" aria-labelledby="tab-tiktok">
-      <!-- Main Infinite Scroll Launcher -->
-      <div class="tiktok-hero-card">
-        <div class="tiktok-hero-content">
-          <div class="tiktok-hero-title">TikTok Việt Nam Cuộn Vô Hạn</div>
-          <div class="tiktok-hero-sub">Phát nổi cửa sổ dọc 9:16 trên macOS. Lướt video liên tục bằng con lăn chuột hoặc phím mũi tên.</div>
-        </div>
-        <button id="tiktok-hero-launch-btn" class="tiktok-hero-btn" type="button">
-          Phát Nổi Ngay
-        </button>
-      </div>
-
-      <!-- Quick Paste Bar -->
-      <div class="tiktok-quick-bar">
-        <input type="text" id="tiktok-url-input" placeholder="Dán link TikTok (video, profile, vt.tiktok.com)..." autocomplete="off" spellcheck="false">
-        <button id="tiktok-paste-btn" class="tiktok-btn-paste" title="Dán từ Clipboard" type="button">Dán</button>
-        <button id="tiktok-float-btn" class="tiktok-btn-float" title="Phát nổi PiP" type="button">Phát PiP</button>
-      </div>
-
-      <!-- Feed Topics -->
-      <div class="tiktok-topics-section">
-        <div class="tiktok-section-label">Chủ đề thịnh hành</div>
-        <div class="tiktok-topic-pills">
-          <button class="tiktok-topic-btn active" data-url="https://www.tiktok.com/foryou?lang=vi-VN">Dành cho bạn</button>
-          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/explore">Khám phá</button>
-          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=tin%20tuc%20viet%20nam">Tin tức VN</button>
-          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=review%20phim%20chieu%20rap">Review Phim</button>
-          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=cong%20nghe%20viet%20nam">Công nghệ</button>
-          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=am%20thuc%20viet%20nam">Ẩm thực</button>
-          <button class="tiktok-topic-btn" data-url="https://www.tiktok.com/search?q=hai%20huoc%20viet%20nam">Hài hước</button>
-        </div>
-      </div>
-
-      <div class="tiktok-web-link-row">
-        <button id="btn-open-tiktok-web" class="tiktok-web-link" type="button">
-          Mở TikTok VN trên tab trình duyệt ↗
-        </button>
-      </div>
-    </div>
-
-    <!-- Panel 4: Continue Watching / Recent -->
+    <!-- Panel 3: Continue Watching / Recent -->
     <div id="panel-recent" class="tab-panel" role="tabpanel" aria-labelledby="tab-recent">
       <div class="recent-header">
-        <span>Lịch sử xem gần đây</span>
-        <button id="btn-clear-recent" class="clear-recent-btn" type="button">Xóa lịch sử</button>
+        <div>
+          <h2>Lịch sử xem gần đây</h2>
+          <p class="recent-sub">Tiếp tục xem ngay tại vị trí đã dừng</p>
+        </div>
+        <button id="btn-clear-recent" class="clear-recent-btn" type="button">Xóa tất cả</button>
       </div>
       <div id="recent-list" class="recent-list">
         <div class="empty-recent">Chưa có lịch sử xem phim. Hãy chọn một phim để phát nổi!</div>
@@ -170,7 +196,7 @@
 
     <!-- Footer -->
     <footer class="footer">
-      <span>Video luôn trong tầm mắt khi bạn làm việc.</span>
+      <span>VibeFloat • Luôn nổi trên mọi ứng dụng khi bạn làm việc</span>
     </footer>
   </div>
 

@@ -19,12 +19,19 @@ class NativeMessageHandler {
         return String(value.prefix(maxLength)) + "..."
     }
 
+    private func loggableURL(_ raw: String) -> String {
+        guard let url = URL(string: raw),
+              let scheme = url.scheme,
+              let host = url.host else { return "<invalid-url>" }
+        return "\(scheme)://\(host)"
+    }
+
     private func summarizeIncomingMessage(_ message: [String: Any]) -> String {
         let action = message["action"] as? String ?? "unknown"
         switch action {
         case "open":
             let site = message["site"] as? String ?? "generic"
-            let url = truncated(message["url"] as? String ?? "")
+            let url = loggableURL(message["url"] as? String ?? "")
             let width = message["width"] ?? "?"
             let height = message["height"] ?? "?"
             let currentTime = message["currentTime"] ?? 0
@@ -33,7 +40,7 @@ class NativeMessageHandler {
             let cookieCount = (message["cookies"] as? [[String: Any]])?.count ?? 0
             let hasMovie = message["movieContext"] != nil
             return "action=open site=\(site) size=\(width)x\(height) time=\(currentTime) videoSrc=\(hasVideoSrc) embedUrl=\(hasEmbedURL) cookies=\(cookieCount) movieContext=\(hasMovie) url=\(url)"
-        case "close", "ping", "nextEpisode", "prevEpisode":
+        case "close", "ping", "nextEpisode", "prevEpisode", "speakAIDub", "stopAIDub", "setDubVoice":
             return "action=\(action)"
         default:
             return "action=\(action) keys=\(message.keys.sorted())"

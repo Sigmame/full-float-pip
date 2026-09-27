@@ -1,4 +1,4 @@
-// popup.js — Popup panel logic with Web Video Detection & VibeWatch Cinema Movie Hub (No Emojis, Clean UI/UX, TikTok VN Infinite Scroll)
+// popup.js — Popup panel logic with Web Video Detection & VibeWatch Cinema Movie Hub (No Emojis, Clean UI/UX)
 
 let currentPopupTab = 'web';
 let popupMovieSource = 'all';
@@ -9,12 +9,158 @@ document.addEventListener('DOMContentLoaded', async () => {
     MovieImages.install(document);
     initFilterChips();
     initMoviePanel();
-    initTikTokPanel();
     initRecentPanel();
     initLofiCoding();
+    initDirectFloat();
+    initNativeStatus();
     initShortcutControls();
     await initTabs();
+    updateRecentBadge();
 });
+
+async function updateRecentBadge() {
+    try {
+        const items = await MovieService.getContinueWatching();
+        const badge = document.getElementById('recent-badge');
+        if (badge) {
+            badge.textContent = items?.length > 0 ? String(items.length) : '';
+        }
+    } catch {}
+}
+
+async function initNativeStatus() {
+    const statusEl = document.getElementById('native-status');
+    if (!statusEl) return;
+
+    function setStatus(connected) {
+        statusEl.classList.remove('status-unknown', 'status-ready', 'status-disconnected');
+        const text = statusEl.querySelector('.status-text');
+        if (connected) {
+            statusEl.classList.add('status-ready');
+            if (text) text.textContent = 'Native: Sẵn sàng';
+            statusEl.title = 'Native Companion App đã kết nối và sẵn sàng phát nổi.';
+        } else {
+            statusEl.classList.add('status-disconnected');
+            if (text) text.textContent = 'Chưa kết nối App';
+            statusEl.title = 'Chưa kết nối macOS App. Bấm để xem hướng dẫn kết nối.';
+        }
+    }
+
+    try {
+        const res = await chrome.runtime.sendMessage({ type: 'GET_NATIVE_STATUS' });
+        setStatus(Boolean(res && res.success));
+    } catch {
+        setStatus(false);
+    }
+
+    statusEl.addEventListener('click', () => {
+        if (statusEl.classList.contains('status-disconnected')) {
+            showFloatErrorHint('Để kết nối Native App: Mở Terminal tại thư mục full-float-pip và chạy ./scripts/install.sh');
+        }
+    });
+}
+
+function initDirectFloat() {
+    const input = document.getElementById('direct-url-input');
+    const pasteBtn = document.getElementById('btn-direct-paste');
+    const floatBtn = document.getElementById('btn-direct-float');
+
+    pasteBtn?.addEventListener('click', async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            if (text && input) {
+                input.value = text.trim();
+                input.focus();
+            }
+        } catch {
+            input?.focus();
+        }
+    });
+
+    const triggerFloat = async () => {
+        const rawUrl = (input?.value || '').trim();
+        if (!rawUrl) {
+            input?.focus();
+            return;
+        }
+
+        if (floatBtn) {
+            floatBtn.disabled = true;
+            floatBtn.textContent = 'Đang mở...';
+        }
+
+        try {
+            const videoInfo = parseDirectFloatUrl(rawUrl);
+            const res = await chrome.runtime.sendMessage({
+                type: 'FLOAT_VIDEO_REQUEST',
+                videoInfo
+            });
+
+            if (res?.success) {
+                if (floatBtn) floatBtn.textContent = 'Đang phát';
+                setTimeout(() => window.close(), 300);
+            } else {
+                if (floatBtn) {
+                    floatBtn.disabled = false;
+                    floatBtn.textContent = 'Thử lại';
+                }
+                showFloatErrorHint(formatFloatError(res));
+            }
+        } catch (err) {
+            if (floatBtn) {
+                floatBtn.disabled = false;
+                floatBtn.textContent = 'Thử lại';
+            }
+            showFloatErrorHint(err?.message || 'Không thể phát nổi link này.');
+        }
+    };
+
+    floatBtn?.addEventListener('click', triggerFloat);
+    input?.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            triggerFloat();
+        }
+    });
+}
+
+function parseDirectFloatUrl(rawUrl) {
+    let url = rawUrl;
+    if (!/^https?:\/\//i.test(url)) {
+        url = 'https://' + url;
+    }
+
+    // YouTube URL detection
+    const ytMatch = url.match(/(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/i);
+    if (ytMatch) {
+        const videoId = ytMatch[1];
+        return {
+            pageUrl: url,
+            embedUrl: `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&enablejsapi=1`,
+            title: `YouTube (${videoId})`,
+            site: 'youtube',
+            width: 640,
+            height: 360,
+            currentTime: 0,
+            preferEmbed: true
+        };
+    }
+
+    const isM3u8 = /\.m3u8(\?|$)/i.test(url);
+    const isMp4 = /\.(mp4|webm|m4v|ogg)(\?|$)/i.test(url);
+    const filename = url.split('/').pop().split('?')[0] || 'Direct Video';
+
+    return {
+        src: (isM3u8 || isMp4) ? url : '',
+        pageUrl: url,
+        embedUrl: (!isM3u8 && !isMp4) ? url : '',
+        title: filename,
+        site: isM3u8 ? 'm3u8' : (isMp4 ? 'mp4' : 'generic'),
+        width: 640,
+        height: 360,
+        currentTime: 0
+    };
+}
 
 async function initShortcutControls() {
     const shortcut = document.getElementById('float-shortcut');
@@ -38,17 +184,15 @@ async function initShortcutControls() {
 async function initTabs() {
     const tabWeb = document.getElementById('tab-web');
     const tabMovies = document.getElementById('tab-movies');
-    const tabTikTok = document.getElementById('tab-tiktok');
     const tabRecent = document.getElementById('tab-recent');
     const panelWeb = document.getElementById('panel-web');
     const panelMovies = document.getElementById('panel-movies');
-    const panelTikTok = document.getElementById('panel-tiktok');
     const panelRecent = document.getElementById('panel-recent');
 
     function setActiveTab(name, remember = true) {
         currentPopupTab = name;
-        const tabs = { web: tabWeb, movies: tabMovies, tiktok: tabTikTok, recent: tabRecent };
-        const panels = { web: panelWeb, movies: panelMovies, tiktok: panelTikTok, recent: panelRecent };
+        const tabs = { web: tabWeb, movies: tabMovies, recent: tabRecent };
+        const panels = { web: panelWeb, movies: panelMovies, recent: panelRecent };
         for (const [key, button] of Object.entries(tabs)) {
             button?.classList.toggle('active', key === name);
             button?.setAttribute('aria-selected', key === name ? 'true' : 'false');
@@ -67,8 +211,8 @@ async function initTabs() {
         }
     }
 
-    const tabOrder = ['web', 'movies', 'tiktok', 'recent'];
-    for (const [name, button] of Object.entries({ web: tabWeb, movies: tabMovies, tiktok: tabTikTok, recent: tabRecent })) {
+    const tabOrder = ['web', 'movies', 'recent'];
+    for (const [name, button] of Object.entries({ web: tabWeb, movies: tabMovies, recent: tabRecent })) {
         button?.addEventListener('keydown', (event) => {
             if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return;
             event.preventDefault();
@@ -77,15 +221,40 @@ async function initTabs() {
                 : (current + (event.key === 'ArrowRight' ? 1 : -1) + tabOrder.length) % tabOrder.length;
             const nextName = tabOrder[next];
             setActiveTab(nextName);
-            ({ web: tabWeb, movies: tabMovies, tiktok: tabTikTok, recent: tabRecent })[nextName]?.focus();
+            ({ web: tabWeb, movies: tabMovies, recent: tabRecent })[nextName]?.focus();
         });
     }
+
+    // Number keys 1/2/3 to switch tabs, '/' to focus search, Esc to blur
+    document.addEventListener('keydown', (e) => {
+        const activeTag = document.activeElement?.tagName;
+        if (['INPUT', 'TEXTAREA', 'SELECT'].includes(activeTag)) {
+            if (e.key === 'Escape') {
+                document.activeElement.blur();
+            }
+            return;
+        }
+        if (e.key === '1') {
+            setActiveTab('web');
+        } else if (e.key === '2') {
+            setActiveTab('movies');
+        } else if (e.key === '3') {
+            setActiveTab('recent');
+        } else if (e.key === '/') {
+            e.preventDefault();
+            if (currentPopupTab === 'movies') {
+                document.getElementById('popup-movie-search')?.focus();
+            } else {
+                document.getElementById('direct-url-input')?.focus();
+            }
+        }
+    });
+
     tabWeb?.addEventListener('click', () => setActiveTab('web'));
     tabMovies?.addEventListener('click', () => setActiveTab('movies'));
-    tabTikTok?.addEventListener('click', () => setActiveTab('tiktok'));
     tabRecent?.addEventListener('click', () => setActiveTab('recent'));
     const saved = await chrome.storage.local.get('vibe_popup_tab').catch(() => ({}));
-    setActiveTab(['web', 'movies', 'tiktok', 'recent'].includes(saved.vibe_popup_tab) ? saved.vibe_popup_tab : 'web', false);
+    setActiveTab(['web', 'movies', 'recent'].includes(saved.vibe_popup_tab) ? saved.vibe_popup_tab : 'web', false);
 
     // Ghost Mode Quick Toggle — sync real native state
     const ghostBtn = document.getElementById('popup-ghost-btn');
@@ -127,6 +296,54 @@ async function initTabs() {
             showFloatErrorHint(e?.message || 'Không đổi được chế độ xuyên chuột.');
         } finally {
             ghostBtn.disabled = false;
+        }
+    });
+
+    // AI Dubbing Quick Toggle — sync storage and native state
+    const aidubBtn = document.getElementById('popup-aidub-btn');
+    let isAIDub = true;
+    const syncAIDubBtn = (on) => {
+        isAIDub = !!on;
+        aidubBtn?.classList.toggle('active', isAIDub);
+        if (aidubBtn) {
+            const stateEl = aidubBtn.querySelector('.aidub-state');
+            if (stateEl) stateEl.textContent = isAIDub ? 'Bật' : 'Tắt';
+            aidubBtn.setAttribute('aria-label', `Lồng tiếng AI: ${isAIDub ? 'Bật' : 'Tắt'}`);
+            aidubBtn.setAttribute('aria-pressed', isAIDub ? 'true' : 'false');
+        }
+    };
+
+    chrome.storage.local.get('vibe_ai_dubbing_enabled').then((data) => {
+        if (data.vibe_ai_dubbing_enabled != null) syncAIDubBtn(data.vibe_ai_dubbing_enabled);
+        else syncAIDubBtn(true);
+    }).catch(() => syncAIDubBtn(true));
+
+    chrome.runtime.sendMessage({ type: 'GET_NATIVE_STATUS' }).then((res) => {
+        if (typeof res?.isAIDubEnabled === 'boolean') syncAIDubBtn(res.isAIDubEnabled);
+    }).catch(() => {});
+
+    aidubBtn?.addEventListener('click', async () => {
+        aidubBtn.disabled = true;
+        try {
+            const nextState = !isAIDub;
+            syncAIDubBtn(nextState);
+            await chrome.storage.local.set({ 'vibe_ai_dubbing_enabled': nextState });
+
+            // Notify active tab content script
+            const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+            if (tab?.id) {
+                chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_AI_DUB', enabled: nextState }).catch(() => {});
+            }
+
+            // Notify native companion app
+            chrome.runtime.sendMessage({
+                type: 'NATIVE_COMMAND',
+                action: 'toggleAIDub'
+            }).catch(() => {});
+        } catch (e) {
+            // ignore
+        } finally {
+            aidubBtn.disabled = false;
         }
     });
 
@@ -234,6 +451,11 @@ async function initWebVideoPanel() {
     }
 
     function renderVideos(tab, videos) {
+        const webBadge = document.getElementById('web-badge');
+        if (webBadge) {
+            webBadge.textContent = videos?.length > 0 ? String(videos.length) : '';
+        }
+
         if (!videos || videos.length === 0) {
             status.textContent = 'Chưa tìm thấy video';
             videoList.innerHTML = '<div class="empty">Bấm phát video trên trang rồi chọn Quét lại.</div>';
@@ -246,11 +468,13 @@ async function initWebVideoPanel() {
         videos.forEach((video, index) => {
             const card = document.createElement('div');
             card.className = 'video-card';
+            const siteClass = video.site ? `site-${video.site.toLowerCase()}` : '';
+            const liveDot = !video.paused ? '<span class="status-live-dot"></span>' : '';
             card.innerHTML = `
                 <div class="video-info">
                   <span class="video-title" title="${escapeAttr(video.title)}">${escapeHtml(video.title)}</span>
-                  <span class="video-meta">${video.paused ? 'Tạm dừng' : 'Đang phát'} · ${video.width}×${video.height} · ${formatDuration(video.duration)}</span>
-                  <span class="video-site">${escapeHtml(video.site)}</span>
+                  <span class="video-meta">${liveDot}${video.paused ? 'Tạm dừng' : 'Đang phát'} · ${video.width}×${video.height} · ${formatDuration(video.duration)}</span>
+                  <span class="video-site ${siteClass}">${escapeHtml(video.site)}</span>
                 </div>
                 <button class="float-btn" data-index="${index}" aria-label="Phát nổi ${escapeAttr(video.title)}">
                   Phát nổi
@@ -346,6 +570,7 @@ async function loadPopupContinueStrip() {
     if (!strip || !rail) return;
 
     const items = await MovieService.getContinueWatching();
+    updateRecentBadge();
     if (!items.length) {
         strip.classList.add('hidden');
         rail.innerHTML = '';
@@ -701,155 +926,20 @@ function renderPopupEpisodes(container, movieDetail) {
     updateServerView();
 }
 
-// MARK: - Panel 3: TikTok Vietnam (Infinite Scroll PiP, No Hardcoded Channels)
-function initTikTokPanel() {
-    const input = document.getElementById('tiktok-url-input');
-    const pasteBtn = document.getElementById('tiktok-paste-btn');
-    const floatBtn = document.getElementById('tiktok-float-btn');
-    const heroBtn = document.getElementById('tiktok-hero-launch-btn');
-    const webBtn = document.getElementById('btn-open-tiktok-web');
-    const topicBtns = document.querySelectorAll('.tiktok-topic-btn');
-
-    // Hero Launch Button (For You VN with infinite scroll)
-    heroBtn?.addEventListener('click', () => {
-        floatTikTok('https://www.tiktok.com/foryou?lang=vi-VN', 'TikTok VN - Dành Cho Bạn');
-    });
-
-    // Paste button
-    pasteBtn?.addEventListener('click', async () => {
-        try {
-            const text = await navigator.clipboard.readText();
-            if (text && input) {
-                input.value = text.trim();
-                input.focus();
-            }
-        } catch {
-            input?.focus();
-            input?.select();
-        }
-    });
-
-    // Float button
-    floatBtn?.addEventListener('click', () => {
-        if (input && input.value) {
-            floatTikTok(input.value);
-        } else {
-            input?.focus();
-        }
-    });
-
-    // Enter key in input
-    input?.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            floatTikTok(input.value);
-        }
-    });
-
-    // Topic Pills
-    topicBtns.forEach(btn => {
-        btn.addEventListener('click', () => {
-            topicBtns.forEach(b => b.classList.remove('active'));
-            btn.classList.add('active');
-            const url = btn.dataset.url;
-            const label = btn.textContent;
-            floatTikTok(url, `TikTok VN - ${label}`);
-        });
-    });
-
-    // Open Web Tab
-    webBtn?.addEventListener('click', () => {
-        chrome.tabs.create({ url: 'https://www.tiktok.com/foryou?lang=vi-VN' });
-    });
-}
-
-async function floatTikTok(rawUrl, defaultTitle = 'TikTok Việt Nam') {
-    if (!rawUrl || !rawUrl.trim()) return;
-    let url = rawUrl.trim();
-
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-        if (url.startsWith('@')) {
-            url = 'https://www.tiktok.com/' + url;
-        } else if (/^\d+$/.test(url)) {
-            url = `https://www.tiktok.com/player/v1/${url}`;
-        } else {
-            url = 'https://' + url;
-        }
-    }
-
-    let embedUrl = '';
-    const videoIdMatch = url.match(/\/video\/(\d+)/) || url.match(/\/v1\/(\d+)/);
-    if (videoIdMatch) {
-        embedUrl = `https://www.tiktok.com/player/v1/${videoIdMatch[1]}`;
-    }
-
-    const floatBtn = document.getElementById('tiktok-float-btn');
-    const heroBtn = document.getElementById('tiktok-hero-launch-btn');
-    if (floatBtn) {
-        floatBtn.disabled = true;
-        floatBtn.textContent = 'Đang mở...';
-    }
-    if (heroBtn) {
-        heroBtn.disabled = true;
-        heroBtn.textContent = 'Đang khởi động...';
-    }
-
-    try {
-        const resp = await chrome.runtime.sendMessage({
-            type: 'FLOAT_VIDEO_REQUEST',
-            videoInfo: {
-                pageUrl: url,
-                embedUrl: embedUrl,
-                title: defaultTitle,
-                site: 'tiktok',
-                width: 340,
-                height: 604,
-                currentTime: 0,
-            }
-        });
-
-        if (resp && resp.success) {
-            if (floatBtn) floatBtn.textContent = 'Đang phát';
-            if (heroBtn) heroBtn.textContent = 'Đang phát';
-            setTimeout(() => window.close(), 300);
-        } else {
-            if (floatBtn) {
-                floatBtn.disabled = false;
-                floatBtn.textContent = 'Thử lại';
-                setTimeout(() => { floatBtn.textContent = 'Phát PiP'; }, 1500);
-            }
-            if (heroBtn) {
-                heroBtn.disabled = false;
-                heroBtn.textContent = 'Phát Nổi Ngay';
-            }
-            showFloatErrorHint(formatFloatError(resp));
-        }
-    } catch (e) {
-        console.error('Failed to float TikTok:', e);
-        if (floatBtn) {
-            floatBtn.disabled = false;
-            floatBtn.textContent = 'Thử lại';
-            setTimeout(() => { floatBtn.textContent = 'Phát PiP'; }, 1500);
-        }
-        if (heroBtn) {
-            heroBtn.disabled = false;
-            heroBtn.textContent = 'Phát Nổi Ngay';
-        }
-        showFloatErrorHint(e?.message || 'Không mở được TikTok nổi.');
-    }
-}
-
-// MARK: - Panel 4: Recent / Continue Watching
+// MARK: - Panel 3: Recent / Continue Watching
 function initRecentPanel() {
     const clearBtn = document.getElementById('btn-clear-recent');
     if (clearBtn) {
         clearBtn.addEventListener('click', async () => {
-            if (confirm('Bạn có chắc muốn xóa lịch sử xem gần đây?')) {
+            if (confirm('Bạn có chắc muốn xóa tất cả lịch sử xem gần đây?')) {
                 if (typeof chrome !== 'undefined' && chrome.storage?.local) {
                     await chrome.storage.local.set({ vibe_continue_watching: [] });
                 } else {
                     localStorage.removeItem('vibe_continue_watching');
                 }
-                renderRecentPanel();
+                updateRecentBadge();
+                await renderRecentPanel();
+                await loadPopupContinueStrip();
             }
         });
     }
@@ -858,6 +948,7 @@ function initRecentPanel() {
 async function renderRecentPanel() {
     const list = document.getElementById('recent-list');
     const items = await MovieService.getContinueWatching();
+    updateRecentBadge();
 
     if (!items || items.length === 0) {
         list.innerHTML = '<div class="empty-recent">Chưa có phim xem gần đây.<br><span style="font-size:10.5px;color:#888;">Chọn một tập phim ở tab "Kho Phim" để phát nổi!</span></div>';
@@ -877,9 +968,12 @@ async function renderRecentPanel() {
                 <div class="recent-ep">${escapeHtml(item.epName || 'Tập 1')}</div>
                 ${progressHtml}
             </div>
-            <button class="float-btn recent-play-btn" data-idx="${idx}">
-                Tiếp tục
-            </button>
+            <div class="recent-item-actions">
+                <button class="float-btn recent-play-btn" data-idx="${idx}" aria-label="Tiếp tục xem ${escapeAttr(item.name)}">
+                    Tiếp tục
+                </button>
+                <button class="recent-remove-btn" data-slug="${escapeAttr(item.slug)}" title="Xóa khỏi lịch sử" aria-label="Xóa">&times;</button>
+            </div>
         </div>
     `;
     }).join('');
@@ -895,6 +989,19 @@ async function renderRecentPanel() {
             } catch (err) {
                 btn.textContent = 'Thử lại';
                 showFloatErrorHint(err?.message || 'Lỗi tiếp tục xem');
+            }
+        });
+    });
+
+    list.querySelectorAll('.recent-remove-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const slug = btn.dataset.slug;
+            if (slug) {
+                await MovieService.removeContinueWatching(slug);
+                updateRecentBadge();
+                await renderRecentPanel();
+                await loadPopupContinueStrip();
             }
         });
     });
@@ -988,7 +1095,6 @@ function showFloatErrorHint(message) {
     const panels = [
         document.getElementById('panel-movies'),
         document.getElementById('panel-recent'),
-        document.getElementById('panel-tiktok'),
         document.getElementById('panel-web')
     ];
     const active = panels.find(p => p?.classList.contains('active')) || panels[0];

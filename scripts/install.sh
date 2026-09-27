@@ -3,6 +3,7 @@
 # Compile Swift native app and configure Chrome Native Messaging
 
 set -e
+umask 077
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -43,11 +44,29 @@ codesign --force --sign - --identifier "com.aspect.floatvideo" --timestamp=none 
   || codesign --force --sign - "$APP_MACOS/FloatVideo"
 echo "Installed and signed: $APP_MACOS/FloatVideo"
 
+# Write a user-owned file without following a pre-existing symlink.
+write_atomic_private() {
+    local destination="$1"
+    local directory
+    directory="$(dirname "$destination")"
+    if [ -L "$destination" ]; then
+        echo "ERROR: refusing to replace symlink: $destination" >&2
+        exit 1
+    fi
+    local temporary
+    temporary="$(mktemp "$directory/.floatvideo-write.XXXXXX")"
+    trap 'rm -f "$temporary"' EXIT
+    cat > "$temporary"
+    chmod 600 "$temporary"
+    mv -f "$temporary" "$destination"
+    trap - EXIT
+}
+
 # ---- Step 3: Create Native Messaging Host wrapper script ----
 echo ""
 echo "[3/4] Configuring Native Messaging..."
 
-cat > "$INSTALL_DIR/float_video_host.sh" << HOSTEOF
+write_atomic_private "$INSTALL_DIR/float_video_host.sh" << HOSTEOF
 #!/bin/bash
 LOG_DIR="\$HOME/Library/Logs/FloatVideo"
 LOG_FILE="\$LOG_DIR/native-host.log"
@@ -73,15 +92,29 @@ echo "  4. Select: $PROJECT_DIR/extension"
 echo "  5. Copy the Extension ID (e.g.: abcdefghijklmnopqrstuvwxyz)"
 echo ""
 read -p "  Enter Chrome Extension ID: " EXT_ID
+# Strip whitespace/normalise case before validating.
+EXT_ID="$(printf '%s' "$EXT_ID" | tr -d '[:space:]' | tr 'A-P' 'a-p')"
 
-if [ -z "$EXT_ID" ]; then
+# Fail closed. A wildcard here would let ANY extension on the machine talk to
+# this native host, which is a far bigger hole than a rerun: the host can drive
+# the floating window and read the CLI token. Chrome extension IDs are exactly
+# 32 characters from a-p, so anything else is a typo, not a valid ID.
+if [[ ! "$EXT_ID" =~ ^[a-p]{32}$ ]]; then
     echo ""
-    echo "  Extension ID is empty, using wildcard (for development only)"
-    echo "  Please re-run this script to configure properly"
-    EXT_ID="*"
+    echo "  ERROR: '$EXT_ID' is not a valid Chrome Extension ID."
+    echo "  An ID is exactly 32 characters, each between a and p."
+    echo ""
+    echo "  How to get it:"
+    echo "  1. Open Chrome -> chrome://extensions"
+    echo "  2. Enable 'Developer mode'"
+    echo "  3. 'Load unpacked' -> select: $PROJECT_DIR/extension"
+    echo "  4. Copy the ID shown on the extension's card and re-run this script."
+    echo ""
+    echo "  The native messaging manifest was NOT written. Fix the ID and re-run."
+    exit 1
 fi
 
-cat > "$NATIVE_HOST_DIR/com.aspect.floatvideo.json" << EOF
+write_atomic_private "$NATIVE_HOST_DIR/com.aspect.floatvideo.json" << EOF
 {
   "name": "com.aspect.floatvideo",
   "description": "Float Video native messaging host",

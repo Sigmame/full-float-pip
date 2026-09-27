@@ -7,13 +7,14 @@ let currentGenre = '';
 let currentCountry = '';
 let currentAudioFilter = 'all';
 let currentViewMode = 'view-poster'; // 'view-poster' or 'view-cinema'
-let currentPage = 1;
 let currentSearchKeyword = '';
 let currentMovie = null;
 let currentSpotlightMovie = null;
 
 let heroSpotlights = [];
 let heroSpotlightIndex = 0;
+let heroRotationTimer = null;
+let isHeroHovered = false;
 let homeRailResizeObserver = null;
 let favSlugSet = new Set();
 let suggestActiveIdx = -1;
@@ -24,6 +25,7 @@ const FALLBACK_POSTER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2
 const PLAY_ICON_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>`;
 const LIST_ICON_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
 const LIST_CHECK_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+const INFO_BTN_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (typeof MovieImages !== 'undefined') MovieImages.install(document);
@@ -65,7 +67,7 @@ function navigateView() {
         gridView?.classList.remove('hidden');
         heroSpotlight?.classList.add('hidden');
         searchMovies(currentSearchKeyword);
-    } else if (currentCategory === 'moi' && !currentGenre && !currentCountry) {
+    } else if (currentCategory === 'moi' && !currentGenre && !currentCountry && !isDubbedSource()) {
         // Home View with Multi-Sections
         homeView?.classList.remove('hidden');
         gridView?.classList.add('hidden');
@@ -123,7 +125,6 @@ function initUI() {
         debounceTimer = setTimeout(() => {
             if (val) {
                 currentSearchKeyword = val;
-                currentPage = 1;
                 navigateView();
             }
         }, 600);
@@ -162,7 +163,6 @@ function initUI() {
             if (val) {
                 MovieService.addRecentSearch(val);
                 currentSearchKeyword = val;
-                currentPage = 1;
                 navigateView();
             }
         } else if (e.key === 'Escape') {
@@ -184,7 +184,6 @@ function initUI() {
         searchClear.classList.add('hidden');
         searchDropdown?.classList.add('hidden');
         currentSearchKeyword = '';
-        currentPage = 1;
         suggestActiveIdx = -1;
         navigateView();
         searchInput?.focus();
@@ -194,7 +193,6 @@ function initUI() {
     const sourceSelect = document.getElementById('source-select');
     sourceSelect?.addEventListener('change', (e) => {
         currentSource = e.target.value;
-        currentPage = 1;
         navigateView();
     });
 
@@ -210,13 +208,39 @@ function initUI() {
         ghostBtn?.setAttribute('aria-pressed', isGhost ? 'true' : 'false');
     };
 
+    const nativeStatusEl = document.getElementById('native-status');
+    const updateNativeStatusUI = (connected) => {
+        if (!nativeStatusEl) return;
+        nativeStatusEl.classList.remove('status-unknown', 'status-ready', 'status-disconnected');
+        const text = nativeStatusEl.querySelector('.status-text');
+        if (connected) {
+            nativeStatusEl.classList.add('status-ready');
+            if (text) text.textContent = 'Native: Sẵn sàng';
+            nativeStatusEl.title = 'Native Companion App đã kết nối và sẵn sàng phát nổi.';
+        } else {
+            nativeStatusEl.classList.add('status-disconnected');
+            if (text) text.textContent = 'Chưa kết nối App';
+            nativeStatusEl.title = 'Chưa kết nối macOS App. Mở Terminal và chạy ./scripts/install.sh';
+        }
+    };
+
     chrome.runtime.sendMessage({ type: 'GET_NATIVE_STATUS' }).then((res) => {
         if (typeof res?.isGhost === 'boolean') syncGhostUI(res.isGhost);
-    }).catch(() => {});
+        updateNativeStatusUI(Boolean(res && res.success));
+    }).catch(() => {
+        updateNativeStatusUI(false);
+    });
+
+    nativeStatusEl?.addEventListener('click', () => {
+        if (nativeStatusEl.classList.contains('status-disconnected')) {
+            showToast('Chưa kết nối Native App: Mở Terminal tại full-float-pip và chạy ./scripts/install.sh');
+        }
+    });
 
     chrome.runtime.onMessage.addListener((msg) => {
-        if (msg?.type === 'NATIVE_STATUS_BROADCAST' && typeof msg.isGhost === 'boolean') {
-            syncGhostUI(msg.isGhost);
+        if (msg?.type === 'NATIVE_STATUS_BROADCAST') {
+            if (typeof msg.isGhost === 'boolean') syncGhostUI(msg.isGhost);
+            if (typeof msg.connected === 'boolean') updateNativeStatusUI(msg.connected);
         }
     });
 
@@ -246,6 +270,7 @@ function initUI() {
     const directSubmitBtn = document.getElementById('btn-submit-direct-float');
     const directUrlInput = document.getElementById('direct-url-input');
     const directTitleInput = document.getElementById('direct-title-input');
+    const directPasteBtn = document.getElementById('btn-direct-paste');
 
     if (openDirectBtn && directModal) {
         openDirectBtn.addEventListener('click', () => {
@@ -258,7 +283,28 @@ function initUI() {
         directModal.addEventListener('click', (e) => {
             if (e.target === directModal) directModal.classList.add('hidden');
         });
-        directSubmitBtn?.addEventListener('click', async () => {
+
+        directPasteBtn?.addEventListener('click', async () => {
+            try {
+                const text = await navigator.clipboard.readText();
+                if (text && directUrlInput) {
+                    directUrlInput.value = text.trim();
+                    if (!directTitleInput?.value?.trim()) {
+                        if (text.includes('youtube.com') || text.includes('youtu.be')) {
+                            directTitleInput.value = 'YouTube Video';
+                        } else {
+                            const fname = text.split('/').pop().split('?')[0];
+                            if (fname) directTitleInput.value = decodeURIComponent(fname);
+                        }
+                    }
+                    directUrlInput.focus();
+                }
+            } catch {
+                directUrlInput?.focus();
+            }
+        });
+
+        const submitDirectStream = async () => {
             const url = directUrlInput?.value?.trim();
             const title = directTitleInput?.value?.trim() || 'Custom Stream';
             if (!url) {
@@ -284,10 +330,46 @@ function initUI() {
                 videoInfo
             });
             showToast(`Đang phát nổi "${title}"`);
+        };
+
+        directSubmitBtn?.addEventListener('click', submitDirectStream);
+        directUrlInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitDirectStream();
+            }
+        });
+        directTitleInput?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                submitDirectStream();
+            }
         });
     }
 
-    // Category Buttons
+    // Category Buttons & Filter Sync
+    const genreSelect = document.getElementById('genre-select');
+    const countrySelect = document.getElementById('country-select');
+    const clearFiltersBtn = document.getElementById('btn-clear-filters');
+
+    const syncFilterState = () => {
+        const isCustom = (currentCategory !== 'moi' || !!currentGenre || !!currentCountry);
+        clearFiltersBtn?.classList.toggle('hidden', !isCustom);
+        genreSelect?.classList.toggle('active', !!currentGenre);
+        countrySelect?.classList.toggle('active', !!currentCountry);
+    };
+
+    clearFiltersBtn?.addEventListener('click', () => {
+        currentCategory = 'moi';
+        currentGenre = '';
+        currentCountry = '';
+        if (genreSelect) genreSelect.value = '';
+        if (countrySelect) countrySelect.value = '';
+        document.querySelectorAll('.cat-btn').forEach(b => b.classList.toggle('active', b.dataset.cat === 'moi'));
+        syncFilterState();
+        navigateView();
+    });
+
     document.querySelectorAll('.cat-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
@@ -295,48 +377,46 @@ function initUI() {
             currentCategory = e.currentTarget.dataset.cat || 'moi';
             currentGenre = '';
             currentCountry = '';
-            const gSelect = document.getElementById('genre-select');
-            const cSelect = document.getElementById('country-select');
-            if (gSelect) gSelect.value = '';
-            if (cSelect) cSelect.value = '';
+            if (genreSelect) genreSelect.value = '';
+            if (countrySelect) countrySelect.value = '';
 
             currentSearchKeyword = '';
             if (searchInput) searchInput.value = '';
             searchClear?.classList.add('hidden');
             searchDropdown?.classList.add('hidden');
-            currentPage = 1;
 
+            syncFilterState();
             navigateView();
         });
     });
 
     // Genre Selector
-    const genreSelect = document.getElementById('genre-select');
     genreSelect?.addEventListener('change', (e) => {
         currentGenre = e.target.value;
         currentCountry = '';
-        const cSelect = document.getElementById('country-select');
-        if (cSelect) cSelect.value = '';
+        if (countrySelect) countrySelect.value = '';
 
         if (currentGenre) {
             document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
-            currentPage = 1;
+            syncFilterState();
             navigateView();
+        } else {
+            syncFilterState();
         }
     });
 
     // Country Selector
-    const countrySelect = document.getElementById('country-select');
     countrySelect?.addEventListener('change', (e) => {
         currentCountry = e.target.value;
         currentGenre = '';
-        const gSelect = document.getElementById('genre-select');
-        if (gSelect) gSelect.value = '';
+        if (genreSelect) genreSelect.value = '';
 
         if (currentCountry) {
             document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
-            currentPage = 1;
+            syncFilterState();
             navigateView();
+        } else {
+            syncFilterState();
         }
     });
 
@@ -346,7 +426,6 @@ function initUI() {
             document.querySelectorAll('.audio-pill').forEach(p => p.classList.remove('active'));
             e.currentTarget.classList.add('active');
             currentAudioFilter = e.currentTarget.dataset.filter || 'all';
-            currentPage = 1;
 
             if (currentCategory === 'favorites') {
                 loadFavorites();
@@ -381,20 +460,21 @@ function initUI() {
         navigateView();
     });
 
-    // Pagination
-    document.getElementById('prev-page-btn')?.addEventListener('click', () => {
-        if (currentPage > 1) {
-            currentPage--;
-            loadMovies();
-            window.scrollTo({ top: 300, behavior: 'smooth' });
-        }
+    // Feed controls: scrolling loads more; the button is the retry path when a
+    // page failed or the reader wants to jump past a slow one.
+    document.getElementById('feed-retry-btn')?.addEventListener('click', () => {
+        if (feed?.done) feed.done = false;
+        loadMoreMovies();
     });
 
-    document.getElementById('next-page-btn')?.addEventListener('click', () => {
-        currentPage++;
-        loadMovies();
-        window.scrollTo({ top: 300, behavior: 'smooth' });
-    });
+    // The header sits over the billboard while the page is at the top and turns
+    // solid once it is not, the way the reference catalogue behaves.
+    const navbar = document.querySelector('.navbar');
+    if (navbar) {
+        const syncNavbar = () => navbar.classList.toggle('navbar-scrolled', window.scrollY > 12);
+        window.addEventListener('scroll', syncNavbar, { passive: true });
+        syncNavbar();
+    }
 
     // Modal Close
     document.getElementById('modal-close-btn')?.addEventListener('click', closeModal);
@@ -402,13 +482,84 @@ function initUI() {
         if (e.target.id === 'movie-modal') closeModal();
     });
 
+    // Shortcuts Modal
+    const shortcutsModal = document.getElementById('shortcuts-modal');
+    const toggleShortcuts = () => {
+        shortcutsModal?.classList.toggle('hidden');
+    };
+    document.getElementById('btn-shortcuts')?.addEventListener('click', toggleShortcuts);
+    document.getElementById('shortcuts-modal-close-btn')?.addEventListener('click', () => {
+        shortcutsModal?.classList.add('hidden');
+    });
+    shortcutsModal?.addEventListener('click', (e) => {
+        if (e.target.id === 'shortcuts-modal') shortcutsModal.classList.add('hidden');
+    });
+
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') closeModal();
+        const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
+        if (e.key === 'Escape') {
+            closeModal();
+            shortcutsModal?.classList.add('hidden');
+            document.getElementById('direct-stream-modal')?.classList.add('hidden');
+        }
+        if (!isInput && e.key === '?') {
+            e.preventDefault();
+            toggleShortcuts();
+        }
+        if (!isInput && (e.key === 'v' || e.key === 'V')) {
+            if (e.shiftKey) {
+                e.preventDefault();
+                const next = window.aiDubbing ? window.aiDubbing.toggle() : false;
+                syncAIDubState(next);
+                return;
+            }
+            const gridBtn = document.getElementById('view-grid-btn');
+            const cinemaBtn = document.getElementById('view-cinema-btn');
+            if (gridBtn && cinemaBtn) {
+                if (gridBtn.classList.contains('active')) cinemaBtn.click();
+                else gridBtn.click();
+            }
+        }
         if (e.key === '/' && document.activeElement !== searchInput) {
             e.preventDefault();
             searchInput?.focus();
         }
     });
+
+    // AI Dubbing controls wiring
+    const aidubBtn = document.getElementById('btn-toggle-aidub');
+    const aidubStatusText = document.getElementById('aidub-status-text');
+    const heroAidubBtn = document.getElementById('hero-aidub-btn');
+    const syncAIDubState = (enabled) => {
+        if (aidubBtn) {
+            aidubBtn.classList.toggle('active', !!enabled);
+            aidubBtn.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+        }
+        if (aidubStatusText) {
+            aidubStatusText.textContent = enabled ? 'Bật' : 'Tắt';
+        }
+        if (heroAidubBtn) {
+            heroAidubBtn.classList.toggle('active', !!enabled);
+        }
+    };
+
+    aidubBtn?.addEventListener('click', () => {
+        const next = window.aiDubbing ? window.aiDubbing.toggle() : false;
+        syncAIDubState(next);
+    });
+
+    heroAidubBtn?.addEventListener('click', () => {
+        const next = window.aiDubbing ? window.aiDubbing.toggle() : false;
+        syncAIDubState(next);
+    });
+
+    window.addEventListener('aidub-state-change', (e) => {
+        syncAIDubState(e.detail?.enabled);
+    });
+
+    if (window.aiDubbing) {
+        syncAIDubState(window.aiDubbing.enabled);
+    }
 
     // Clear continue watching
     document.getElementById('clear-continue-btn')?.addEventListener('click', async () => {
@@ -467,7 +618,6 @@ async function showRecentSearchesDropdown() {
             dropdown.classList.add('hidden');
             MovieService.addRecentSearch(q);
             currentSearchKeyword = q;
-            currentPage = 1;
             navigateView();
         });
     });
@@ -550,7 +700,7 @@ async function loadHomePage() {
         container.innerHTML = homeData.sections.map((sec, secIdx) => {
             const railClass = sec.isTop10 ? 'home-section-rail top10-rail' : 'home-section-rail';
             return `
-                <section class="home-section" data-sec-id="${sec.id}">
+                <section class="home-section" data-sec-id="${escapeAttr(sec.id)}">
                     <div class="home-section-header">
                         <div class="home-section-title-wrap">
                             <div>
@@ -614,7 +764,6 @@ async function loadHomePage() {
                     currentGenre = genreSlug;
                     currentCategory = 'moi';
                     document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
-                    currentPage = 1;
                     navigateView();
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                     return;
@@ -625,7 +774,6 @@ async function loadHomePage() {
                     });
                     currentCategory = targetCat;
                     currentGenre = '';
-                    currentPage = 1;
                     navigateView();
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                 }
@@ -641,6 +789,8 @@ async function loadHomePage() {
             Lỗi khi tải trang chủ từ nguồn ${currentSource.toUpperCase()}. Hãy thử chọn nguồn khác.
         </div>`;
     }
+    // The home sections just loaded; check they took their skeletons away.
+    auditTransientNodes(container, 'loading the home sections', true);
 }
 
 // MARK: - Render Movie Cards HTML
@@ -664,15 +814,23 @@ function renderMovieCardsHtml(items, opts = {}) {
             badges.push('<span class="card-badge badge-vs">VIETSUB</span>');
         }
 
-        const ratingBadge = item.rating ? `<span class="card-badge-rating">${item.rating}</span>` : '';
+        const ratingBadge = item.rating ? `<span class="card-badge-rating">${escapeHtml(item.rating)}</span>` : '';
         const epBadge = item.episode_current ? `<span class="card-ep-badge">${escapeHtml(item.episode_current)}</span>` : '';
         const rank = item.rank || opts.rank;
         const rankHtml = (opts.isTop10 && rank)
-            ? `<span class="card-rank" aria-hidden="true">${rank}</span>`
+            ? `<span class="card-rank" aria-hidden="true">${escapeHtml(rank)}</span>`
             : '';
         const inList = favSlugSet.has(item.slug);
         const imageKind = opts.isRail || currentViewMode === 'view-cinema' ? 'wide' : 'poster';
         const cardClass = `movie-card${opts.isRail ? ' movie-card-rail' : ''}${opts.isTop10 ? ' movie-card-top10' : ''}`;
+
+        let matchScore = 95;
+        if (item.rating) {
+            matchScore = Math.min(99, Math.max(88, Math.round(Number(item.rating) * 10)));
+        } else if (item.slug) {
+            const hash = item.slug.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+            matchScore = 93 + (hash % 6);
+        }
 
         return `
             <div class="${cardClass}" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" role="group" aria-label="${escapeAttr(item.name)}" tabindex="0">
@@ -689,13 +847,21 @@ function renderMovieCardsHtml(items, opts = {}) {
                         <button type="button" class="card-action-btn card-mylist-btn ${inList ? 'is-listed' : ''}" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" title="${inList ? 'Bỏ khỏi danh sách' : 'Thêm vào danh sách'}" aria-label="${inList ? 'Bỏ' : 'Thêm'} ${escapeAttr(item.name)} ${inList ? 'khỏi' : 'vào'} danh sách" aria-pressed="${inList ? 'true' : 'false'}">
                             ${inList ? LIST_CHECK_SVG : LIST_ICON_SVG}
                         </button>
+                        <button type="button" class="card-action-btn card-info-btn" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" title="Chi tiết phim" aria-label="Xem chi tiết ${escapeAttr(item.name)}">
+                            ${INFO_BTN_SVG}
+                        </button>
                     </div>
                 </div>
                 <div class="movie-info">
                     <div class="movie-title" title="${escapeAttr(item.name)}">${escapeHtml(item.name)}</div>
+                    <div class="card-meta-row">
+                        <span class="card-match">${matchScore}% Phù hợp</span>
+                        <span class="card-age">16+</span>
+                        <span class="card-hd">${escapeHtml(item.quality || 'FHD')}</span>
+                    </div>
                     <div class="movie-origin">${escapeHtml(item.origin_name || item.year || '')}</div>
                     <div class="movie-footer">
-                        <span>${item.year ? 'Năm ' + item.year : (item.quality || 'FHD')}</span>
+                        <span>${item.year ? 'Năm ' + escapeHtml(item.year) : escapeHtml(item.quality || 'FHD')}</span>
                         <button type="button" class="card-quick-float card-quick-float-text" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" title="Phát nổi">Phát nổi</button>
                     </div>
                 </div>
@@ -705,6 +871,14 @@ function renderMovieCardsHtml(items, opts = {}) {
 }
 
 function bindCardClicks(container) {
+    container.querySelectorAll('.card-info-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const slug = btn.dataset.slug;
+            const source = btn.dataset.source || currentSource;
+            openMovieDetail(slug, source);
+        });
+    });
     container.querySelectorAll('.card-quick-float').forEach(btn => {
         btn.addEventListener('click', async (e) => {
             e.stopPropagation();
@@ -863,8 +1037,12 @@ async function quickFloatMovie(slug, source) {
     return !!floated;
 }
 
-// MARK: - Cinema Hero Spotlight
+// MARK: - Cinema Hero Spotlight Slideshow
 function stopHeroRotation() {
+    if (heroRotationTimer) {
+        clearInterval(heroRotationTimer);
+        heroRotationTimer = null;
+    }
     heroSpotlights = [];
     heroSpotlightIndex = 0;
 }
@@ -876,6 +1054,79 @@ function startHeroRotation(spots) {
     if (!heroSpotlights.length) return;
     renderHeroSpotlight(heroSpotlights[0]);
     renderHeroDots();
+    setupHeroSlideControls();
+
+    if (heroSpotlights.length > 1) {
+        startHeroAutoPlay();
+    }
+}
+
+function startHeroAutoPlay() {
+    if (heroRotationTimer) {
+        clearInterval(heroRotationTimer);
+    }
+    heroRotationTimer = setInterval(() => {
+        if (isHeroHovered) return;
+        nextHeroSlide();
+    }, 6000);
+}
+
+function nextHeroSlide() {
+    if (heroSpotlights.length < 2) return;
+    heroSpotlightIndex = (heroSpotlightIndex + 1) % heroSpotlights.length;
+    renderHeroSpotlight(heroSpotlights[heroSpotlightIndex], { soft: true });
+    updateHeroDots();
+}
+
+function prevHeroSlide() {
+    if (heroSpotlights.length < 2) return;
+    heroSpotlightIndex = (heroSpotlightIndex - 1 + heroSpotlights.length) % heroSpotlights.length;
+    renderHeroSpotlight(heroSpotlights[heroSpotlightIndex], { soft: true });
+    updateHeroDots();
+}
+
+function setupHeroSlideControls() {
+    const heroSection = document.getElementById('hero-spotlight');
+    if (!heroSection || heroSection.dataset.controlsAttached) return;
+    heroSection.dataset.controlsAttached = 'true';
+
+    heroSection.addEventListener('mouseenter', () => {
+        isHeroHovered = true;
+    });
+    heroSection.addEventListener('mouseleave', () => {
+        isHeroHovered = false;
+    });
+
+    const prevBtn = document.getElementById('hero-prev-btn');
+    const nextBtn = document.getElementById('hero-next-btn');
+
+    if (prevBtn) {
+        prevBtn.onclick = (e) => {
+            e.stopPropagation();
+            prevHeroSlide();
+            startHeroAutoPlay();
+        };
+    }
+    if (nextBtn) {
+        nextBtn.onclick = (e) => {
+            e.stopPropagation();
+            nextHeroSlide();
+            startHeroAutoPlay();
+        };
+    }
+
+    // Keyboard navigation when mouse is in hero area
+    heroSection.addEventListener('keydown', (e) => {
+        if (e.key === 'ArrowLeft') {
+            e.preventDefault();
+            prevHeroSlide();
+            startHeroAutoPlay();
+        } else if (e.key === 'ArrowRight') {
+            e.preventDefault();
+            nextHeroSlide();
+            startHeroAutoPlay();
+        }
+    });
 }
 
 function renderHeroDots() {
@@ -891,11 +1142,14 @@ function renderHeroDots() {
         `<button type="button" class="hero-dot ${i === heroSpotlightIndex ? 'active' : ''}" data-idx="${i}" aria-label="Phim nổi bật ${i + 1}: ${escapeAttr(heroSpotlights[i].name)}" aria-pressed="${i === heroSpotlightIndex}"></button>`
     ).join('');
     dots.querySelectorAll('.hero-dot').forEach(btn => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
             const idx = Number(btn.dataset.idx) || 0;
+            if (idx === heroSpotlightIndex) return;
             heroSpotlightIndex = idx;
             renderHeroSpotlight(heroSpotlights[idx], { soft: true });
             updateHeroDots();
+            startHeroAutoPlay();
         });
     });
 }
@@ -904,8 +1158,9 @@ function updateHeroDots() {
     const dots = document.getElementById('hero-dots');
     if (!dots) return;
     dots.querySelectorAll('.hero-dot').forEach((btn, i) => {
-        btn.classList.toggle('active', i === heroSpotlightIndex);
-        btn.setAttribute('aria-pressed', i === heroSpotlightIndex ? 'true' : 'false');
+        const isActive = i === heroSpotlightIndex;
+        btn.classList.toggle('active', isActive);
+        btn.setAttribute('aria-pressed', isActive ? 'true' : 'false');
     });
 }
 
@@ -920,13 +1175,22 @@ function renderHeroSpotlight(spot, opts = {}) {
     if (opts.soft && content) {
         content.classList.add('hero-fade');
         requestAnimationFrame(() => {
-            setTimeout(() => content.classList.remove('hero-fade'), 280);
+            setTimeout(() => content.classList.remove('hero-fade'), 260);
         });
     }
 
     const backdropEl = document.getElementById('hero-backdrop');
     if (backdropEl) {
-        MovieImages.apply(backdropEl, { poster: spot.thumb, thumb: spot.poster }, 'hero');
+        if (opts.soft) {
+            backdropEl.style.opacity = '0.35';
+            setTimeout(() => {
+                MovieImages.apply(backdropEl, { poster: spot.thumb, thumb: spot.poster }, 'hero');
+                backdropEl.style.opacity = '1';
+            }, 120);
+        } else {
+            MovieImages.apply(backdropEl, { poster: spot.thumb, thumb: spot.poster }, 'hero');
+            backdropEl.style.opacity = '1';
+        }
     }
 
     document.getElementById('hero-title').textContent = spot.name;
@@ -938,12 +1202,26 @@ function renderHeroSpotlight(spot, opts = {}) {
         ratingEl.textContent = spot.rating ? spot.rating : '—';
     }
 
+    const matchEl = document.getElementById('hero-match');
+    if (matchEl) {
+        let matchScore = 98;
+        if (spot.rating) {
+            matchScore = Math.min(99, Math.max(90, Math.round(Number(spot.rating) * 10)));
+        }
+        matchEl.textContent = `${matchScore}% Phù hợp`;
+    }
+
     const audioBadgeEl = document.getElementById('hero-audio-badge');
     if (audioBadgeEl) {
         if (spot.hasThuyetMinh && spot.hasLongTieng) audioBadgeEl.textContent = 'TM + LT';
         else if (spot.hasThuyetMinh) audioBadgeEl.textContent = 'Thuyết Minh';
         else if (spot.hasLongTieng) audioBadgeEl.textContent = 'Lồng Tiếng';
         else audioBadgeEl.textContent = 'Vietsub FHD';
+    }
+
+    const heroAidubBtn = document.getElementById('hero-aidub-btn');
+    if (heroAidubBtn) {
+        heroAidubBtn.classList.toggle('active', !!window.aiDubbing?.enabled);
     }
 
     const floatBtn = document.getElementById('hero-float-btn');
@@ -965,10 +1243,6 @@ function renderHeroSpotlight(spot, opts = {}) {
         await refreshFavSet();
         setListButtonState(favBtn, isFav);
         showToast(isFav ? `Đã thêm "${spot.name}" vào Danh sách của tôi` : `Đã bỏ khỏi Danh sách`);
-        // Refresh mylist rail if on home
-        if (currentCategory === 'moi' && !currentSearchKeyword) {
-            // soft refresh of home is heavy — skip; next navigate will pick up
-        }
     };
 }
 
@@ -991,19 +1265,28 @@ async function loadContinueWatching() {
             ? `<div class="continue-progress"><div class="continue-progress-bar" style="width:${pct}%"></div></div>`
             : '';
         return `
-        <button type="button" class="continue-card" data-idx="${idx}" title="Phát nổi tiếp — ${escapeAttr(item.name)}">
-            <img class="continue-thumb" loading="lazy" ${MovieImages.attr(item, 'wide')} width="280" height="158" alt="">
-            <span class="continue-info">
-                <span class="continue-title" title="${escapeAttr(item.name)}">${escapeHtml(item.name)}</span>
-                <span class="continue-ep">${escapeHtml(item.epName || 'Tập 1')}</span>
+        <div class="continue-card" data-idx="${idx}" title="Phát nổi tiếp — ${escapeAttr(item.name)}" tabindex="0" role="button">
+            <div class="continue-thumb-wrap">
+                <img class="continue-thumb" loading="lazy" ${MovieImages.attr(item, 'wide')} width="280" height="158" alt="">
+                <button type="button" class="continue-play-overlay" title="Phát tiếp">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                </button>
+                <button type="button" class="continue-delete-btn" data-slug="${escapeAttr(item.slug)}" title="Xóa khỏi danh sách xem tiếp" aria-label="Xóa">&times;</button>
                 ${progressHtml}
-            </span>
-        </button>
+            </div>
+            <div class="continue-info">
+                <span class="continue-title" title="${escapeAttr(item.name)}">${escapeHtml(item.name)}</span>
+                <div class="continue-ep-row">
+                    <span class="continue-ep">${escapeHtml(item.epName || 'Tập 1')}</span>
+                    ${pct > 0 ? `<span class="continue-pct">${pct}%</span>` : ''}
+                </div>
+            </div>
+        </div>
     `;
     }).join('');
 
     rail.querySelectorAll('.continue-card').forEach(card => {
-        card.addEventListener('click', async () => {
+        const handleCardAction = async () => {
             const idx = parseInt(card.dataset.idx);
             const item = items[idx];
             try {
@@ -1013,6 +1296,28 @@ async function loadContinueWatching() {
                 }
             } catch (err) {
                 alert('Lỗi: ' + err.message);
+            }
+        };
+
+        card.addEventListener('click', (e) => {
+            if (e.target.closest('.continue-delete-btn')) return;
+            handleCardAction();
+        });
+        card.addEventListener('keydown', (e) => {
+            if (['Enter', ' '].includes(e.key) && !e.target.closest('.continue-delete-btn')) {
+                e.preventDefault();
+                handleCardAction();
+            }
+        });
+    });
+
+    rail.querySelectorAll('.continue-delete-btn').forEach(btn => {
+        btn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            const slug = btn.dataset.slug;
+            if (slug) {
+                await MovieService.removeContinueWatching(slug);
+                await loadContinueWatching();
             }
         });
     });
@@ -1078,7 +1383,8 @@ async function floatContinueItem(item) {
             site: 'movie',
             width: 640,
             height: 360,
-            currentTime: resumeAt
+            currentTime: resumeAt,
+            aiDubEnabled: window.aiDubbing ? window.aiDubbing.enabled : false
         }
     });
     if (res?.success) return true;
@@ -1086,139 +1392,395 @@ async function floatContinueItem(item) {
     return false;
 }
 
-// MARK: - Load Category Movies (Grid View)
-async function loadMovies() {
-    const grid = document.getElementById('movie-grid');
-    const title = document.getElementById('section-title');
-    const count = document.getElementById('result-count');
+// MARK: - Feed (cuộn để tải thêm)
+//
+// The grid is a feed, not a page: every list view loads page 1 and then keeps
+// appending for as long as the reader scrolls, up to the 98 pages KKPhim has of
+// the dubbed catalogue. `feed` describes the list currently on screen, so a
+// response for a view the user has already left is recognised (the object
+// identity changed) and dropped instead of appended to the wrong list.
+const FEED_PAGE_CAP = 60;
+let feed = null;
+let feedObserver = null;
+let feedScrollBound = false;
 
-    // Skeletons
-    grid.innerHTML = Array(12).fill('<div class="skeleton-card"></div>').join('');
+const CATEGORY_TITLES = {
+    'moi': 'Phim mới cập nhật',
+    'chieurap': 'Chiếu rạp',
+    'thuyetminh': 'Thuyết minh',
+    'longtieng': 'Lồng tiếng',
+    'bo': 'Phim bộ',
+    'le': 'Phim lẻ',
+    'hoathinh': 'Anime',
+    'tvshows': 'TV Shows',
+    'livetv': 'Truyền hình & luồng trực tiếp',
+    'favorites': 'Danh sách của tôi'
+};
 
-    const catTitles = {
-        'moi': 'Phim Mới Cập Nhật 2026',
-        'chieurap': 'Chiếu rạp',
-        'thuyetminh': 'Thuyết minh',
-        'longtieng': 'Lồng tiếng',
-        'bo': 'Phim bộ hot',
-        'le': 'Phim lẻ',
-        'hoathinh': 'Anime',
-        'tvshows': 'TV Shows',
-        'livetv': 'Truyền hình & luồng trực tiếp',
-        'favorites': 'Danh sách của tôi'
+function isDubbedSource() {
+    return currentSource === 'thuyetminh' || currentSource === 'longtieng';
+}
+
+function sourceLabel(id = currentSource) {
+    return MovieService.SOURCES.find(s => s.id === id)?.name || String(id).toUpperCase();
+}
+
+function filterLabel(list, slug, fallback) {
+    const hit = (list || []).find(entry => entry.id === slug);
+    return hit ? hit.name : (fallback || slug);
+}
+
+function feedKeyFor() {
+    if (currentSearchKeyword) return `search|${currentSearchKeyword}|${currentSource}|${currentAudioFilter}`;
+    if (currentCategory === 'favorites') return 'favorites';
+    return `list|${currentSource}|${currentCategory}|${currentGenre}|${currentCountry}|${currentAudioFilter}`;
+}
+
+function newFeed() {
+    feed = {
+        key: feedKeyFor(),
+        mode: currentSearchKeyword ? 'search' : (currentCategory === 'favorites' ? 'favorites' : 'list'),
+        page: 0,
+        loading: false,
+        done: false,
+        emptyStreak: 0,
+        seen: new Set(),
+        count: 0
     };
+    return feed;
+}
 
-    if (currentGenre) {
-        title.textContent = `Thể loại: ${currentGenre.toUpperCase()}`;
-    } else if (currentCountry) {
-        title.textContent = `Quốc gia: ${currentCountry.toUpperCase()}`;
-    } else {
-        title.textContent = catTitles[currentCategory] || 'Danh Sách Phim';
+function audioFiltered(items) {
+    if (currentAudioFilter === 'thuyetminh') return items.filter(it => it.hasThuyetMinh);
+    if (currentAudioFilter === 'longtieng') return items.filter(it => it.hasLongTieng);
+    if (currentAudioFilter === 'chieurap') return items.filter(it => it.isChieuRap);
+    return items;
+}
+
+/** One page of whatever list is on screen. */
+async function fetchFeedPage(target) {
+    const next = target.page + 1;
+    if (target.mode === 'search') {
+        // The search endpoint answers a single page; there is nothing to append.
+        if (next > 1) return [];
+        return MovieService.search(currentSearchKeyword, currentSource, currentAudioFilter);
     }
-    count.textContent = '';
+    if (target.mode === 'favorites') {
+        if (next > 1) return [];
+        return audioFiltered(await MovieService.getFavorites());
+    }
+    if (currentGenre) return audioFiltered(await MovieService.getByGenre(currentGenre, next));
+    if (currentCountry) return audioFiltered(await MovieService.getByCountry(currentCountry, next));
+    return audioFiltered(await MovieService.getLatest(currentSource, currentCategory, next));
+}
 
+function setFeedFooter(state) {
+    const footer = document.getElementById('feed-footer');
+    const status = document.getElementById('feed-status');
+    const end = document.getElementById('feed-end');
+    const retry = document.getElementById('feed-retry-btn');
+    const sentinel = document.getElementById('feed-sentinel');
+    if (!footer) return;
+    footer.dataset.state = state;
+    footer.classList.toggle('hidden', state === 'hidden');
+    if (status) status.classList.toggle('hidden', state !== 'loading');
+    if (end) end.classList.toggle('hidden', state !== 'end');
+    if (retry) retry.classList.toggle('hidden', state !== 'error');
+    if (sentinel) sentinel.classList.toggle('hidden', state !== 'idle' && state !== 'loading');
+}
+
+/**
+ * The grid opens with a dozen `.skeleton-card` placeholders. They are a
+ * *loading* cover, so the first page that actually brings cards has to take
+ * them away — appending next to them leaves a dozen empty boxes sitting above
+ * the list for the rest of the session (that is what "loading cover" looked
+ * like on screen: twelve blank poster boxes followed by the real cards).
+ */
+function clearLoadingCovers(grid) {
+    if (!grid || typeof grid.querySelectorAll !== 'function') return 0;
+    const covers = grid.querySelectorAll('.skeleton-card');
+    let removed = 0;
+    Array.from(covers || []).forEach(node => {
+        if (!node) return;
+        if (typeof node.remove === 'function') node.remove();
+        else if (node.parentNode && typeof node.parentNode.removeChild === 'function') node.parentNode.removeChild(node);
+        removed += 1;
+    });
+    return removed;
+}
+
+/** One line in the grid's own place, for a list that has nothing to show. */
+function showGridMessage(grid, message) {
+    if (!grid) return;
+    grid.innerHTML = `<div class="feed-empty">${escapeHtml(message)}</div>`;
+}
+
+/** Why a list came back with nothing — the filter is the usual answer. */
+function feedEmptyMessage() {
+    if (currentSearchKeyword) return `Không tìm thấy phim nào cho “${currentSearchKeyword}”.`;
+    if (currentAudioFilter === 'thuyetminh') return 'Nguồn này không có phim thuyết minh trong danh sách đang chọn.';
+    if (currentAudioFilter === 'longtieng') return 'Nguồn này không có phim lồng tiếng trong danh sách đang chọn.';
+    if (currentAudioFilter === 'chieurap') return 'Nguồn này không có phim chiếu rạp trong danh sách đang chọn.';
+    return 'Danh sách này hiện không có phim.';
+}
+
+/**
+ * The transient pieces of the feed are meant to live only while a load is in
+ * flight: the loading covers, the "loading more" status, its sentinel. A load
+ * that has already brought data has to take them away, because a survivor
+ * reads as real content — that is exactly what the loading-cover bug looked
+ * like on screen (blank poster boxes sitting above the real cards).
+ *
+ * `settled` says the load finished or brought data, so the covers must be gone;
+ * while a feed is genuinely still empty they are allowed to stay.
+ *
+ * Both roots that load transients into themselves are checked: the movie grid
+ * (covers) and the home sections container (skeletons).
+ */
+function isOnScreen(node) {
+    if (!node || node.removed) return false;
+    // A placeholder inside a hidden view is not on screen, so it is not a
+    // leftover. The fake DOM in the tests has no ancestors: `closest` is null.
+    return !node.closest || !node.closest('.hidden');
+}
+
+function leftoverTransientNodes(root, settled) {
+    const leftovers = [];
+    if (settled && root && typeof root.querySelectorAll === 'function') {
+        [
+            ['.skeleton-card', 'loading cover'],
+            ['.home-section-skeleton', 'home section skeleton']
+        ].forEach(([selector, what]) => {
+            const nodes = Array.from(root.querySelectorAll(selector) || []).filter(isOnScreen);
+            if (nodes.length) leftovers.push({ selector, what, count: nodes.length });
+        });
+    }
+    const footer = document.getElementById('feed-footer');
+    const state = footer ? (footer.dataset.state || 'idle') : 'idle';
+    const status = document.getElementById('feed-status');
+    if (state !== 'loading' && isOnScreen(status) && !status.classList.contains('hidden')) {
+        leftovers.push({ selector: '#feed-status', what: 'loading status', count: 1 });
+    }
+    const sentinel = document.getElementById('feed-sentinel');
+    if ((state === 'end' || state === 'error') && isOnScreen(sentinel)
+        && !sentinel.classList.contains('hidden')) {
+        leftovers.push({ selector: '#feed-sentinel', what: 'feed sentinel', count: 1 });
+    }
+    return leftovers;
+}
+
+/**
+ * After a load, name whatever transient node it left behind, so a leftover is
+ * visible in the console instead of only on screen where it looks like content.
+ * Returns the issues it found so a caller (or a test) can act on them.
+ */
+function auditTransientNodes(grid, context, settled) {
+    const leftovers = leftoverTransientNodes(grid, settled);
+    leftovers.forEach(issue => {
+        console.warn(`[catalog] leftover ${issue.what} after ${context}: `
+            + `${issue.count} node(s) still in the DOM (${issue.selector}) — `
+            + 'a finished load should have removed or hidden them.');
+    });
+    renderAuditBanner(context, leftovers);
+    return leftovers;
+}
+
+/**
+ * The audit is a debugging tool, so its banner stays off by default and is
+ * switched on from outside: `?audit=1` in the URL, `localStorage['catalog-audit']
+ * = '1'`, or `window.CATALOG_AUDIT_DEBUG = true` from the console.
+ */
+function auditDebugEnabled() {
     try {
-        await refreshFavSet();
-        let items = [];
-        if (currentGenre) {
-            items = await MovieService.getByGenre(currentGenre, currentPage);
-        } else if (currentCountry) {
-            items = await MovieService.getByCountry(currentCountry, currentPage);
-        } else {
-            items = await MovieService.getLatest(currentSource, currentCategory, currentPage);
-        }
-
-        // Apply Audio Sub-pill Filter
-        if (currentAudioFilter === 'thuyetminh') {
-            items = items.filter(it => it.hasThuyetMinh);
-        } else if (currentAudioFilter === 'longtieng') {
-            items = items.filter(it => it.hasLongTieng);
-        } else if (currentAudioFilter === 'chieurap') {
-            items = items.filter(it => it.isChieuRap);
-        }
-
-        renderGrid(items);
-        updatePagination(true);
+        if (window.CATALOG_AUDIT_DEBUG) return true;
+        if (/[?&]audit=1(?:&|$)/.test(location.search || '')) return true;
+        if (location.search && location.search.includes('audit=0')) return false;
+        if (typeof localStorage !== 'undefined' && localStorage.getItem('catalog-audit') === '1') return true;
     } catch (err) {
-        console.error('Failed to load movies:', err);
-        grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: #ff5555; padding: 48px;">
-            Không tải được dữ liệu phim từ nguồn ${currentSource.toUpperCase()}. Hãy thử chọn nguồn khác.
-        </div>`;
+        // Debug helpers must never break a page they are meant to inspect.
+    }
+    return false;
+}
+
+let auditBannerTimer = null;
+
+/** Show the audit's findings in a small panel, when the debug flag is on. */
+function renderAuditBanner(context, leftovers) {
+    const banner = document.getElementById('catalog-audit');
+    if (!banner) return;
+    if (!auditDebugEnabled() || !leftovers.length) {
+        banner.classList.add('hidden');
+        banner.innerHTML = '';
+        return;
+    }
+    const rows = leftovers.map(issue =>
+        `<li>${escapeHtml(issue.what)} ×${issue.count} <code>${escapeHtml(issue.selector)}</code></li>`
+    ).join('');
+    banner.innerHTML = `
+        <div class="catalog-audit-head">
+            <strong>Node tạm còn sót sau khi tải</strong>
+            <button type="button" class="catalog-audit-close" aria-label="Đóng">&times;</button>
+        </div>
+        <p class="catalog-audit-ctx">${escapeHtml(context)}</p>
+        <ul>${rows}</ul>
+    `;
+    banner.classList.remove('hidden');
+    banner.querySelector('.catalog-audit-close')?.addEventListener('click', () => {
+        banner.classList.add('hidden');
+        banner.innerHTML = '';
+    });
+    if (auditBannerTimer) clearTimeout(auditBannerTimer);
+    auditBannerTimer = setTimeout(() => {
+        banner.classList.add('hidden');
+        banner.innerHTML = '';
+    }, 8000);
+}
+
+/**
+ * Append one page, skipping what is already on screen. Only the new cards get
+ * listeners: re-binding the whole grid would double-fire every card click and
+ * replace images that are still loading.
+ */
+function appendToGrid(grid, items, target) {
+    if (!grid) return 0;
+    const fresh = [];
+    (items || []).forEach(item => {
+        if (!item || !item.slug) return;
+        const key = `${item.source || currentSource}:${item.slug}`;
+        if (target.seen.has(key)) return;
+        target.seen.add(key);
+        fresh.push(item);
+    });
+    if (!fresh.length) return 0;
+    clearLoadingCovers(grid);
+
+    const stage = document.createElement('div');
+    stage.innerHTML = renderMovieCardsHtml(fresh);
+    bindCardClicks(stage);
+    const fragment = document.createDocumentFragment();
+    while (stage.firstChild) fragment.appendChild(stage.firstChild);
+    grid.appendChild(fragment);
+    target.count += fresh.length;
+    return fresh.length;
+}
+
+function installFeedObserver() {
+    const sentinel = document.getElementById('feed-sentinel');
+    feedObserver?.disconnect();
+    feedObserver = null;
+    if (sentinel && typeof IntersectionObserver === 'function') {
+        feedObserver = new IntersectionObserver(entries => {
+            if (entries.some(entry => entry.isIntersecting)) loadMoreMovies();
+        }, { rootMargin: '700px 0px 0px 0px' });
+        feedObserver.observe(sentinel);
+        return;
+    }
+    if (!feedScrollBound) {
+        feedScrollBound = true;
+        window.addEventListener('scroll', () => {
+            const footer = document.getElementById('feed-footer');
+            if (!footer || footer.classList.contains('hidden')) return;
+            if (footer.getBoundingClientRect().top < window.innerHeight + 600) loadMoreMovies();
+        }, { passive: true });
     }
 }
 
-// MARK: - Search Movies
-async function searchMovies(keyword) {
-    const grid = document.getElementById('movie-grid');
+/** Load the next page of the list on screen. Safe to call often. */
+async function loadMoreMovies() {
+    const target = feed;
+    if (!target || target.loading || target.done) return;
+    if (target.key !== feedKeyFor()) return;
+    if (target.page >= FEED_PAGE_CAP) {
+        target.done = true;
+        setFeedFooter('end');
+        return;
+    }
+
+    target.loading = true;
+    setFeedFooter('loading');
+    try {
+        const items = await fetchFeedPage(target);
+        if (feed !== target) return; // the view changed while this was in flight
+        const added = appendToGrid(document.getElementById('movie-grid'), items, target);
+        target.page += 1;
+        target.emptyStreak = (items.length && !added) ? target.emptyStreak + 1 : 0;
+        const countEl = document.getElementById('result-count');
+        if (countEl) countEl.textContent = target.count ? `${target.count} phim` : '';
+        // Out of titles: the source returned nothing, or a whole page was
+        // filtered out by the audio pill twice in a row.
+        if (!items.length || target.emptyStreak >= 2) {
+            target.done = true;
+            // Nothing ever arrived: the placeholders would otherwise stay on
+            // screen as twelve empty boxes for a list that has no cards at all.
+            if (!target.count) showGridMessage(document.getElementById('movie-grid'), feedEmptyMessage());
+            setFeedFooter('end');
+        } else {
+            setFeedFooter('idle');
+        }
+    } catch (err) {
+        console.error('[catalog] feed page failed:', err);
+        if (feed !== target) return;
+        if (!target.count) {
+            showGridMessage(document.getElementById('movie-grid'),
+                `Không tải được dữ liệu từ nguồn ${String(currentSource).toUpperCase()}. Hãy chọn nguồn khác hoặc thử lại.`);
+        }
+        setFeedFooter('error');
+    } finally {
+        target.loading = false;
+        // The load just touched the DOM; check it cleaned up after itself.
+        if (feed === target) {
+            auditTransientNodes(document.getElementById('movie-grid'),
+                `loading page ${target.page}`, target.count > 0 || target.done);
+        }
+    }
+}
+
+function applyListHeading() {
     const title = document.getElementById('section-title');
     const count = document.getElementById('result-count');
+    if (count) count.textContent = '';
+    if (!title) return;
+    if (currentSearchKeyword) title.textContent = `Kết quả cho “${currentSearchKeyword}”`;
+    else if (currentGenre) title.textContent = `Thể loại ${filterLabel(MovieService.GENRES, currentGenre)}`;
+    else if (currentCountry) title.textContent = `Quốc gia ${filterLabel(MovieService.COUNTRIES, currentCountry)}`;
+    else if (isDubbedSource()) title.textContent = sourceLabel();
+    else title.textContent = CATEGORY_TITLES[currentCategory] || 'Danh sách phim';
+}
 
+/** Load the first page of the current list and start the scroll feed. */
+async function loadFeedView() {
+    const grid = document.getElementById('movie-grid');
+    if (!grid) return;
+    applyListHeading();
+    newFeed();
     grid.innerHTML = Array(12).fill('<div class="skeleton-card"></div>').join('');
-    title.textContent = `Kết quả tìm kiếm: "${keyword}"`;
-    MovieService.addRecentSearch(keyword);
-
+    setFeedFooter('loading');
+    installFeedObserver();
     try {
         await refreshFavSet();
-        let items = await MovieService.search(keyword, currentSource, currentAudioFilter);
-        count.textContent = `(${items.length} phim)`;
-        renderGrid(items);
-        updatePagination(false);
     } catch (err) {
-        console.error('Search failed:', err);
-        grid.innerHTML = `<div style="grid-column: 1/-1; text-align: center; color: #ff5555; padding: 48px;">
-            Lỗi khi tìm kiếm trên ${currentSource.toUpperCase()}.
-        </div>`;
+        console.warn('[catalog] favourites unavailable:', err);
     }
+    await loadMoreMovies();
+}
+
+// MARK: - Load Category Movies (Grid View)
+async function loadMovies() {
+    await loadFeedView();
+}
+
+// MARK: - Search Movies
+async function searchMovies(keyword = currentSearchKeyword) {
+    if (keyword) {
+        currentSearchKeyword = keyword;
+        MovieService.addRecentSearch(keyword);
+    }
+    await loadFeedView();
 }
 
 // MARK: - Favorites
 async function loadFavorites() {
-    const grid = document.getElementById('movie-grid');
-    const title = document.getElementById('section-title');
-    const count = document.getElementById('result-count');
-
-    title.textContent = 'Danh sách của tôi';
-    await refreshFavSet();
-    let items = await MovieService.getFavorites();
-
-    if (currentAudioFilter === 'thuyetminh') items = items.filter(it => it.hasThuyetMinh);
-    else if (currentAudioFilter === 'longtieng') items = items.filter(it => it.hasLongTieng);
-
-    count.textContent = `(${items.length} phim)`;
-    renderGrid(items);
-    updatePagination(false);
-}
-
-// MARK: - Render Grid
-function renderGrid(items) {
-    const grid = document.getElementById('movie-grid');
-    if (!items || items.length === 0) {
-        grid.innerHTML = '<div style="grid-column: 1/-1; text-align: center; color: var(--text-muted); padding: 60px; font-size: 14px;">Không tìm thấy phim phù hợp với tiêu chí lọc.</div>';
-        return;
-    }
-
-    grid.innerHTML = renderMovieCardsHtml(items);
-    bindCardClicks(grid);
-}
-
-function updatePagination(show) {
-    const prevBtn = document.getElementById('prev-page-btn');
-    const nextBtn = document.getElementById('next-page-btn');
-    const indicator = document.getElementById('page-indicator');
-
-    if (!show) {
-        prevBtn?.classList.add('hidden');
-        nextBtn?.classList.add('hidden');
-        indicator?.classList.add('hidden');
-        return;
-    }
-
-    prevBtn?.classList.remove('hidden');
-    nextBtn?.classList.remove('hidden');
-    indicator?.classList.remove('hidden');
-
-    if (prevBtn) prevBtn.disabled = currentPage <= 1;
-    if (indicator) indicator.textContent = `Trang ${currentPage}`;
+    await loadFeedView();
 }
 
 // MARK: - Open Movie Detail Modal
@@ -1270,15 +1832,45 @@ async function openMovieDetail(slug, source = currentSource) {
             };
         }
 
-        renderEpisodes(detail.episodes);
+        const continueList = await MovieService.getContinueWatching();
+        const continueEntry = continueList.find(c => c.slug === detail.slug);
+
+        // Continue watching banner in detail modal
+        const epSection = modal.querySelector('.episodes-section');
+        let contBanner = epSection?.querySelector('.modal-continue-banner');
+        if (contBanner) contBanner.remove();
+
+        if (continueEntry) {
+            contBanner = document.createElement('div');
+            contBanner.className = 'modal-continue-banner';
+            const pct = MovieService.progressPercent(continueEntry);
+            contBanner.innerHTML = `
+                <div>
+                    <div class="modal-continue-title">Đang xem dở: ${escapeHtml(continueEntry.epName || 'Tập 1')}</div>
+                    <div class="modal-continue-sub">${pct > 0 ? `Tiến độ: ${pct}%` : 'Bấm để tiếp tục xem ngay'}</div>
+                </div>
+                <button class="modal-continue-btn" type="button">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                    <span>Tiếp tục xem</span>
+                </button>
+            `;
+            contBanner.querySelector('.modal-continue-btn')?.addEventListener('click', async () => {
+                await floatContinueItem(continueEntry);
+            });
+            const epHeader = epSection?.querySelector('.episodes-header');
+            if (epHeader) epHeader.after(contBanner);
+            else epSection?.prepend(contBanner);
+        }
+
+        renderEpisodes(detail.episodes, continueEntry);
     } catch (err) {
         console.error('Failed to get detail:', err);
         document.getElementById('modal-desc').textContent = 'Lỗi khi tải chi tiết phim từ máy chủ.';
     }
 }
 
-// MARK: - Render Episodes with Multi-Server Switcher
-function renderEpisodes(episodes) {
+// MARK: - Render Episodes with Multi-Server Switcher & Chunking
+function renderEpisodes(episodes, continueEntry = null) {
     const tabsContainer = document.getElementById('server-tabs');
     const grid = document.getElementById('episodes-grid');
 
@@ -1290,6 +1882,7 @@ function renderEpisodes(episodes) {
 
     const validServers = episodes.filter(s => s.items && s.items.length > 0);
     let activeServerIdx = MovieService.preferVietnameseServerIndex(validServers);
+    let activeChunk = 0;
 
     function renderServer(sIdx) {
         const server = validServers[sIdx];
@@ -1316,17 +1909,66 @@ function renderEpisodes(episodes) {
             btn.addEventListener('click', (e) => {
                 const newIdx = parseInt(e.currentTarget.dataset.idx);
                 activeServerIdx = newIdx;
+                activeChunk = 0;
                 renderServer(newIdx);
             });
         });
 
-        // Render Episode Buttons
-        grid.innerHTML = server.items.map((ep, idx) => `
-            <button class="ep-btn" data-index="${idx}" title="Bấm để phát nổi trên Terminal/Cursor">
-                ${escapeHtml(ep.name)}
-            </button>
-        `).join('');
+        // Check if episode chunking is needed (series > 25 episodes)
+        const totalEps = server.items.length;
+        const chunkSize = 25;
+        let chunkTabsHtml = '';
 
+        if (totalEps > chunkSize) {
+            if (continueEntry) {
+                const watchedIdx = server.items.findIndex(it => (it.slug && it.slug === continueEntry.epSlug) || it.name === continueEntry.epName);
+                if (watchedIdx >= 0) {
+                    activeChunk = Math.floor(watchedIdx / chunkSize);
+                }
+            }
+
+            const numChunks = Math.ceil(totalEps / chunkSize);
+            const chunkBtns = [];
+            for (let c = 0; c < numChunks; c++) {
+                const start = c * chunkSize + 1;
+                const end = Math.min((c + 1) * chunkSize, totalEps);
+                chunkBtns.push(`
+                    <button class="ep-chunk-btn ${c === activeChunk ? 'active' : ''}" data-chunk="${c}" type="button">
+                        Tập ${start} - ${end}
+                    </button>
+                `);
+            }
+            chunkTabsHtml = `<div class="ep-chunk-tabs">${chunkBtns.join('')}</div>`;
+        }
+
+        const startIndex = totalEps > chunkSize ? activeChunk * chunkSize : 0;
+        const endIndex = totalEps > chunkSize ? Math.min((activeChunk + 1) * chunkSize, totalEps) : totalEps;
+        const visibleItems = server.items.slice(startIndex, endIndex);
+
+        const epsHtml = visibleItems.map((ep, localIdx) => {
+            const actualIdx = startIndex + localIdx;
+            const isWatching = continueEntry && (
+                (ep.slug && continueEntry.epSlug === ep.slug) ||
+                (ep.name && continueEntry.epName === ep.name)
+            );
+            return `
+                <button class="ep-btn ${isWatching ? 'ep-watching' : ''}" data-index="${actualIdx}" title="${isWatching ? 'Tập đang xem dở — Bấm để phát nổi' : 'Bấm để phát nổi trên Terminal/Cursor'}">
+                    ${escapeHtml(ep.name)}${isWatching ? ' • Đang xem' : ''}
+                </button>
+            `;
+        }).join('');
+
+        grid.innerHTML = chunkTabsHtml + `<div class="episodes-buttons-wrap" style="display:flex; flex-wrap:wrap; gap:6px;">${epsHtml}</div>`;
+
+        // Bind Chunk Clicks
+        grid.querySelectorAll('.ep-chunk-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                activeChunk = parseInt(e.currentTarget.dataset.chunk);
+                renderServer(sIdx);
+            });
+        });
+
+        // Bind Episode Clicks
         grid.querySelectorAll('.ep-btn').forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const idx = parseInt(e.currentTarget.dataset.index);
@@ -1369,7 +2011,8 @@ async function floatEpisode(ep, movie, server, opts = {}) {
                 width: 640,
                 height: 360,
                 currentTime: resumeAt,
-                movieContext
+                movieContext,
+                aiDubEnabled: window.aiDubbing ? window.aiDubbing.enabled : false
             }
         });
 

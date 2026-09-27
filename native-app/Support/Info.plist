@@ -16,6 +16,10 @@
   <string>1.1.0</string>
   <key>NSSpeechRecognitionUsageDescription</key>
   <string>VibeFloat nghe tiếng trong video để tua qua đoạn quảng cáo.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>VibeFloat thu âm thanh do ứng dụng phát để nhận diện và tua quảng cáo phim.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>VibeFloat nhận diện tiếng quảng cáo trong phim. Ứng dụng không thu micro.</string>
   <key>NSMicrophoneUsageDescription</key>
   <string>VibeFloat không thu micro. Hệ thống yêu cầu khóa này để nhận dạng tiếng phát từ video.</string>
 </dict>

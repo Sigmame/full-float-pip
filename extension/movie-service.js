@@ -101,9 +101,16 @@ const MovieService = {
     currentSource: 'kkphim',
 
     // Available sources configuration
+    //
+    // `thuyetminh` and `longtieng` are not extra providers: they are the two
+    // dubbed catalogues, which is what a viewer browsing "Thuyết minh" actually
+    // wants (2.344 and 1.379 titles measured, 24 per page) instead of the newest
+    // ten releases that happen to carry a dub.
     SOURCES: [
         { id: 'kkphim', name: 'KKPhim (HLS FHD)', badge: 'VIP' },
         { id: 'nguonc', name: 'NguonC (Cập nhật liên tục)', badge: 'Đang Chiếu' },
+        { id: 'thuyetminh', name: 'Kho Thuyết Minh (2.300+ phim)', badge: 'TM' },
+        { id: 'longtieng', name: 'Kho Lồng Tiếng (1.300+ phim)', badge: 'LT' },
         { id: 'all', name: 'Tổng Hợp Đa Nguồn (Khuyên Dùng)', badge: 'Đầy Đủ' }
     ],
 
@@ -392,10 +399,10 @@ const MovieService = {
     async getHomeSections(source = 'kkphim') {
         const results = await Promise.allSettled([
             this._getKKPhimList('chieurap', 1),
-            this._getNguonCList('dangchieu', 1),
+            this._getNguonCList('moi', 1),
             this._getKKPhimList('bo', 1),
-            this._getKKPhimList('thuyetminh', 1),
-            this._getKKPhimList('longtieng', 1),
+            this._getKKPhimList('thuyetminh', 1).then(items => this._withNguonCAudio(items, 'thuyetminh')),
+            this._getKKPhimList('longtieng', 1).then(items => this._withNguonCAudio(items, 'longtieng')),
             this._getKKPhimList('le', 1),
             this._getKKPhimList('hoathinh', 1),
             this.getFavorites(),
@@ -412,10 +419,18 @@ const MovieService = {
         const favorites = results[7].status === 'fulfilled' ? results[7].value : [];
         const because = results[8].status === 'fulfilled' ? results[8].value : { items: [] };
 
-        // Billboard: 2–3 cinema titles with detail (parallel)
-        const spotlightCandidates = chieuRapRaw
-            .filter(m => m.thumb || m.poster)
-            .slice(0, 3);
+        // Billboard: 5–6 featured cinema & blockbuster titles with detail (parallel)
+        const seenSlugs = new Set();
+        const candidatePool = [...chieuRapRaw, ...dangChieuRaw, ...phimBoRaw, ...phimLeRaw];
+        const spotlightCandidates = [];
+        for (const m of candidatePool) {
+            if (!m || !m.slug || seenSlugs.has(m.slug)) continue;
+            if (m.thumb || m.poster) {
+                seenSlugs.add(m.slug);
+                spotlightCandidates.push(m);
+                if (spotlightCandidates.length >= 6) break;
+            }
+        }
         const spotlightDetails = await Promise.allSettled(
             spotlightCandidates.map(m => this.getDetail(m.slug, m.source || 'kkphim'))
         );
@@ -473,7 +488,7 @@ const MovieService = {
             {
                 id: 'thuyetminh',
                 title: 'Thuyết minh',
-                subtitle: 'Bản tiếng Việt chuẩn phòng thu',
+                subtitle: 'Kho 2.300+ bản thuyết minh tiếng Việt',
                 items: thuyetMinhRaw.slice(0, 12),
                 categoryKey: 'thuyetminh'
             },
@@ -487,7 +502,7 @@ const MovieService = {
             {
                 id: 'longtieng',
                 title: 'Lồng tiếng',
-                subtitle: 'LT chọn lọc cho vibe coding',
+                subtitle: 'Kho 1.300+ bản lồng tiếng chọn lọc',
                 items: longTiengRaw.slice(0, 12),
                 categoryKey: 'longtieng'
             },
@@ -521,18 +536,24 @@ const MovieService = {
         if (category === 'livetv') {
             return this.getLiveTVChannels();
         }
+        // Browsing the dubbed catalogue itself: the category the user picked
+        // follows the source, so "Kho Thuyết Minh" stays dubbed even on
+        // "Trang chủ".
+        const effectiveCategory = (source === 'thuyetminh' || source === 'longtieng')
+            ? source
+            : category;
         if (source === 'all') {
             const [kkResult, ncResult] = await Promise.allSettled([
-                this._getKKPhimList(category, page),
-                this._getNguonCList(category, page)
+                this._getKKPhimList(effectiveCategory, page),
+                this._getNguonCList(effectiveCategory, page)
             ]);
             const kkItems = kkResult.status === 'fulfilled' ? kkResult.value : [];
             const ncItems = ncResult.status === 'fulfilled' ? ncResult.value : [];
             return this._mergeAndDeduplicate(kkItems, ncItems);
         } else if (source === 'nguonc') {
-            return this._getNguonCList(category, page);
+            return this._getNguonCList(effectiveCategory, page);
         } else {
-            return this._getKKPhimList(category, page);
+            return this._getKKPhimList(effectiveCategory, page);
         }
     },
 
@@ -741,7 +762,16 @@ const MovieService = {
             return [];
         }
 
-        const normalized = items.map(item => this._normalizeKKPhimItem(item));
+        let normalized = items.map(item => this._normalizeKKPhimItem(item));
+        // The category *is* the audio track. Measured on `phim-thuyet-minh`: all
+        // 24 items of page 1 read "Vietsub + Thuyết Minh", and every item of
+        // `phim-long-tieng` carries a dub. Marking them here means the audio
+        // pill can never filter one of these lists down to nothing.
+        if (category === 'thuyetminh') {
+            normalized = normalized.map(it => ({ ...it, hasThuyetMinh: true }));
+        } else if (category === 'longtieng') {
+            normalized = normalized.map(it => ({ ...it, hasLongTieng: true }));
+        }
         return this._sortNewestFirst(normalized);
     },
 
@@ -872,41 +902,97 @@ const MovieService = {
     },
 
     // --- NguonC Implementation ---
-    async _getNguonCList(category = 'moi', page = 1) {
-        let url = `https://phim.nguonc.com/api/films/phim-moi-cap-nhat?page=${page}`;
 
-        if (category === 'moi' || category === 'dangchieu') {
-            // NguonC's 'dang-chieu' has the freshest on-air 2026 episodes updating hourly
-            url = `https://phim.nguonc.com/api/films/danh-sach/dang-chieu?page=${page}`;
-        } else if (category === 'chieurap') {
-            url = `https://phim.nguonc.com/api/films/danh-sach/dang-chieu?page=${page}`;
-        } else if (category === 'bo') {
-            url = `https://phim.nguonc.com/api/films/danh-sach/phim-bo?page=${page}`;
-        } else if (category === 'le') {
-            url = `https://phim.nguonc.com/api/films/danh-sach/phim-le?page=${page}`;
-        } else if (category === 'hoathinh') {
-            url = `https://phim.nguonc.com/api/films/danh-sach/hoat-hinh?page=${page}`;
-        } else if (category === 'tvshows') {
-            url = `https://phim.nguonc.com/api/films/danh-sach/tv-shows?page=${page}`;
+    /**
+     * NguonC answers 404 - "Category movie doesn't exist!" - for every category
+     * the extension used to ask for (`dang-chieu` and `phim-chieu-rap`), because
+     * that site renames and drops its lists. The result was a silently empty
+     * NguonC half of the home page. Only these paths answer today, probed one by
+     * one: `phim-moi-cap-nhat`, `phim-bo`, `phim-le`, `hoat-hinh`, `tv-shows`.
+     */
+    _nguoncCategoryPath(category) {
+        switch (category) {
+            case 'bo': return '/api/films/danh-sach/phim-bo';
+            case 'le': return '/api/films/danh-sach/phim-le';
+            case 'hoathinh': return '/api/films/danh-sach/hoat-hinh';
+            case 'tvshows': return '/api/films/danh-sach/tv-shows';
+            // No cinema category exists on NguonC, and guessing one is what broke
+            // the home page: return nothing and let KKPhim (which does have one)
+            // fill the Chiếu rạp row.
+            case 'chieurap': return '';
+            default: return '/api/films/phim-moi-cap-nhat';
         }
+    },
+
+    async _getNguonCList(category = 'moi', page = 1) {
+        if (category === 'thuyetminh' || category === 'longtieng') {
+            return this._getNguonCAudioList(category, page);
+        }
+        const path = this._nguoncCategoryPath(category);
+        if (!path) return [];
+        const url = `https://phim.nguonc.com${path}?page=${page}`;
 
         try {
             const res = await fetch(url);
             const data = await res.json();
             const items = data.items || [];
-            let normalized = items.map(item => this._normalizeNguonCItem(item));
-
-            if (category === 'thuyetminh') {
-                normalized = normalized.filter(it => it.hasThuyetMinh);
-            } else if (category === 'longtieng') {
-                normalized = normalized.filter(it => it.hasLongTieng);
-            }
-
+            const normalized = items.map(item => this._normalizeNguonCItem(item));
             return this._sortNewestFirst(normalized);
         } catch (e) {
             console.warn('[MovieService] _getNguonCList error:', e);
             return [];
         }
+    },
+
+    /**
+     * Dubbed titles from NguonC.
+     *
+     * NguonC labels audio per title (`language: "Vietsub + Thuyết Minh"`) and
+     * publishes no dubbed list, and its pages hold ten titles each. Measured hit
+     * rates: 4/50 on `phim-moi-cap-nhat`, 1/30 on `phim-bo`, 1/30 on `phim-le`.
+     * Filtering one page therefore returns nothing at all, which is why the
+     * dubbed views used to look empty. This scans a window of the newest pages
+     * once and caches the (small) result for the session, then pages through it.
+     */
+    _nguoncAudioCache: {},
+    _nguonCAudioPageSize: 24,
+    async _getNguonCAudioList(kind, page = 1, scanPages = 10) {
+        const entry = this._nguoncAudioCache[kind];
+        const fresh = entry && (Date.now() - entry.at) < 10 * 60 * 1000;
+        if (!fresh) {
+            const pages = [];
+            for (let p = 1; p <= scanPages; p++) pages.push(p);
+            const results = await Promise.allSettled(
+                pages.map(p => fetch(`https://phim.nguonc.com/api/films/phim-moi-cap-nhat?page=${p}`)
+                    .then(r => r.json()))
+            );
+            const all = [];
+            results.forEach(r => {
+                if (r.status !== 'fulfilled') return;
+                (r.value?.items || []).forEach(item => all.push(this._normalizeNguonCItem(item)));
+            });
+            this._nguoncAudioCache[kind] = {
+                at: Date.now(),
+                thuyetminh: all.filter(it => it.hasThuyetMinh),
+                longtieng: all.filter(it => it.hasLongTieng)
+            };
+            console.log(`[MovieService] NguonC audio scan: ${all.length} titles -> `
+                + `${this._nguoncAudioCache[kind].thuyetminh.length} TM, `
+                + `${this._nguoncAudioCache[kind].longtieng.length} LT`);
+        }
+        const list = this._nguoncAudioCache[kind][kind] || [];
+        const size = this._nguonCAudioPageSize;
+        return list.slice((page - 1) * size, page * size);
+    },
+
+    /**
+     * KKPhim's dubbed list with anything dubbed NguonC has and it does not.
+     * Different catalogues, same category: the merge is what makes a dubbed row
+     * wider than either source on its own.
+     */
+    async _withNguonCAudio(kkItems, kind) {
+        const ncItems = await this._getNguonCAudioList(kind).catch(() => []);
+        return this._mergeAndDeduplicate(kkItems, ncItems);
     },
 
     async _searchNguonC(keyword) {
@@ -1165,6 +1251,23 @@ const MovieService = {
                 chrome.storage.local.set({ vibe_continue_watching: clamped }, resolve);
             } else if (typeof localStorage !== 'undefined') {
                 localStorage.setItem('vibe_continue_watching', JSON.stringify(clamped));
+                resolve();
+            } else {
+                resolve();
+            }
+        });
+    },
+
+    /** Remove a single movie from continue watching history by slug. */
+    async removeContinueWatching(slug) {
+        if (!slug) return;
+        const list = await this.getContinueWatching();
+        const filtered = list.filter(it => it.slug !== slug);
+        return new Promise(resolve => {
+            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+                chrome.storage.local.set({ vibe_continue_watching: filtered }, resolve);
+            } else if (typeof localStorage !== 'undefined') {
+                localStorage.setItem('vibe_continue_watching', JSON.stringify(filtered));
                 resolve();
             } else {
                 resolve();

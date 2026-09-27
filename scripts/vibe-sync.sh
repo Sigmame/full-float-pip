@@ -28,8 +28,15 @@ fi
 CMD="${1:-toggle}"
 
 case "$CMD" in
-    play|pause|toggle|forward|backward|duck|unduck|ghost|boss|status|bigger|smaller|grow|shrink|next|prev|nextEpisode|prevEpisode|skipIntroNow|skipintronow)
+    play|pause|toggle|forward|backward|duck|unduck|ghost|boss|status|bigger|smaller|grow|shrink|next|prev|nextEpisode|prevEpisode|skipIntroNow|skipintronow|aidub|aiDub|toggleAIDub)
         ENDPOINT="api/$CMD"
+        ;;
+    dubVoice|edgeVoice|voice)
+        if [ -n "${2:-}" ]; then
+            ENDPOINT="api/dubVoice?voice=$2"
+        else
+            ENDPOINT="api/dubVoice"
+        fi
         ;;
     opacity)
         VAL="${2:-0.6}"

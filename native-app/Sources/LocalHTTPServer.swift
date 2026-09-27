@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Darwin
 
 // MARK: - LocalHTTPServer — Local HTTP Server
 // Provides valid HTTP Referer header for YouTube embeds
@@ -9,6 +10,9 @@ class LocalHTTPServer {
     private(set) var port: UInt16 = 0
     private var isReady = false
     private let apiToken = UUID().uuidString
+    private let playCapability = UUID().uuidString
+
+    var localPlayCapability: String { playCapability }
 
     var onCommand: ((String, [String: String]) -> [String: Any]?)?
 
@@ -29,17 +33,18 @@ class LocalHTTPServer {
                     self?.port = port
                     self?.isReady = true
                     NSLog("[FloatVideo] HTTP server ready on port \(port)")
-                    // Save port for CLI & Agent hooks
+                    // Save port & token for CLI & Agent hooks.
+                    // Owner-only permissions, and a symlink planted at either
+                    // path is refused rather than followed: these live directly in
+                    // $HOME, so following one would write the token wherever the
+                    // link points. The old code used `write(atomically:)` for the
+                    // port (0644) and `createFile` for the token (which follows
+                    // an existing symlink).
                     let home = FileManager.default.homeDirectoryForCurrentUser
                     let portFile = home.appendingPathComponent(".floatvideo_port")
                     let tokenFile = home.appendingPathComponent(".floatvideo_token")
-                    try? "\(port)".write(to: portFile, atomically: true, encoding: .utf8)
-                    _ = FileManager.default.createFile(
-                        atPath: tokenFile.path,
-                        contents: self?.apiToken.data(using: .utf8),
-                        attributes: [.posixPermissions: 0o600]
-                    )
-                    try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: tokenFile.path)
+                    Self.writePrivateFile("\(port)", to: portFile)
+                    Self.writePrivateFile(self?.apiToken ?? "", to: tokenFile)
                     completion(port)
                 }
             case .failed(let error):
@@ -60,9 +65,43 @@ class LocalHTTPServer {
         listener?.cancel()
         listener = nil
         isReady = false
-        let tokenFile = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".floatvideo_token")
-        try? FileManager.default.removeItem(at: tokenFile)
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        try? FileManager.default.removeItem(at: home.appendingPathComponent(".floatvideo_token"))
+        try? FileManager.default.removeItem(at: home.appendingPathComponent(".floatvideo_port"))
         NSLog("[FloatVideo] HTTP server stopped")
+    }
+
+    // MARK: - Private File Writing
+
+    /// Writes a secret/IPC value with owner-only permissions, refusing to follow
+    /// a symlink at the destination. Returns false when the path could not be
+    /// written safely — callers keep going, since a missing token file only
+    /// disables the CLI, it does not break the player.
+    @discardableResult
+    private static func writePrivateFile(_ text: String, to url: URL) -> Bool {
+        let path = url.path
+        // `attributesOfItem` follows symlinks, so probe explicitly.
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil {
+            NSLog("[FloatVideo] Refusing to write \(url.lastPathComponent): symlink at path")
+            return false
+        }
+        // A stale file from a previous run would also defeat O_EXCL; remove it
+        // first, deliberately, rather than reusing whatever is there.
+        try? FileManager.default.removeItem(atPath: path)
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else {
+            NSLog("[FloatVideo] Could not create \(url.lastPathComponent) (errno \(errno))")
+            return false
+        }
+        defer { close(fd) }
+        let data = Data(text.utf8)
+        let written = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        guard written == data.count else {
+            NSLog("[FloatVideo] Short write for \(url.lastPathComponent)")
+            return false
+        }
+        _ = fchmod(fd, 0o600)
+        return true
     }
 
     // MARK: - Connection Handling
@@ -98,6 +137,27 @@ class LocalHTTPServer {
 
         let path = parts[1]
 
+        // Browsers may omit both Origin and Referer, so these headers are only
+        // defense in depth. The capability/token below is the auth decision.
+        if path.hasPrefix("/play") {
+            guard queryValue("cap", in: path) == playCapability else {
+                sendErrorResponse(connection: connection, code: 403, message: "Forbidden")
+                return
+            }
+            for headerName in ["origin", "referer"] {
+                if let value = Self.headerValue(headerName, in: lines), !Self.isLoopbackOrigin(value) {
+                    NSLog("[FloatVideo] Refused \(path) from non-loopback \(headerName): \(value.prefix(80))")
+                    sendErrorResponse(connection: connection, code: 403, message: "Forbidden")
+                    return
+                }
+            }
+        } else if path == "/health" {
+            guard Self.headerValue("x-vibefloat-token", in: lines) == apiToken else {
+                sendErrorResponse(connection: connection, code: 403, message: "Forbidden")
+                return
+            }
+        }
+
         if path.hasPrefix("/play") {
             handlePlayRequest(path: path, connection: connection)
         } else if path == "/health" {
@@ -113,6 +173,30 @@ class LocalHTTPServer {
         } else {
             sendErrorResponse(connection: connection, code: 404, message: "Not Found")
         }
+    }
+
+    // MARK: - Request Header Helpers
+
+    private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+
+    private static func headerValue(_ name: String, in lines: [String]) -> String? {
+        let prefix = name.lowercased() + ":"
+        return lines.first { $0.lowercased().hasPrefix(prefix) }?
+            .split(separator: ":", maxSplits: 1).last?
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    private func queryValue(_ name: String, in path: String) -> String? {
+        guard let components = URLComponents(string: "http://localhost\(path)") else { return nil }
+        return components.queryItems?.first(where: { $0.name == name })?.value
+    }
+
+    /// True when an Origin/Referer header points at this machine — i.e. at the
+    /// player page we served ourselves. `null` origins and anything unparsable
+    /// count as foreign.
+    private static func isLoopbackOrigin(_ value: String) -> Bool {
+        guard let host = URLComponents(string: value)?.host ?? URL(string: value)?.host else { return false }
+        return loopbackHosts.contains(host.lowercased())
     }
 
     // MARK: - API Request Handler (Vibe-Sync & Automation)
@@ -180,6 +264,7 @@ class LocalHTTPServer {
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
+            <meta name="referrer" content="no-referrer">
             <title>VibeFloat</title>
             <style>
                 * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -316,25 +401,6 @@ class LocalHTTPServer {
                 } catch(e) {}
             };
             </script>
-        </body>
-        </html>
-        """
-    }
-
-    private func buildGenericEmbedHTML(videoId: String) -> String {
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                * { margin: 0; padding: 0; }
-                html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-                iframe { width: 100%; height: 100%; border: none; }
-            </style>
-        </head>
-        <body>
-            <iframe src="\(videoId)" allow="autoplay; encrypted-media" allowfullscreen></iframe>
         </body>
         </html>
         """
