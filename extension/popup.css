@@ -6,10 +6,13 @@
   --bg-card: #282834;
   --bg-card-hover: #343444;
   --text-primary: #f5f5f7;
-  --text-secondary: #a1a1aa;
-  --text-muted: #a1a1aa;
+  --text-secondary: #c4c4ce;
+  --text-muted: #a1a1ae;
   --accent: #ff3b5c;
   --accent-hover: #ff5274;
+  --focus: #ff8da0;
+  --error: #fb7185;
+  --on-accent: #17171d;
   --accent-glow: rgba(255, 59, 92, 0.35);
   --gold: #f5c518;
   --tm-color: #f59e0b;
@@ -18,7 +21,7 @@
   --vs-color: #06b6d4;
   --success: #10b981;
   --danger: #ef4444;
-  --border: rgba(255, 255, 255, 0.09);
+  --border: rgba(255, 255, 255, 0.14);
   --radius: 10px;
   --radius-sm: 6px;
 }
@@ -454,6 +457,18 @@ input:focus-visible {
   cursor: wait;
 }
 
+.btn-direct-paste:active,
+.btn-direct-float:active,
+.popup-server-btn:active {
+  transform: scale(0.97);
+}
+
+.btn-direct-paste:disabled,
+.popup-server-btn:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+
 .web-panel-heading {
   display: flex;
   align-items: center;
@@ -533,6 +548,12 @@ input:focus-visible {
 
 .tab-panel.active {
   display: block;
+  animation: panel-enter 160ms ease-out;
+}
+
+@keyframes panel-enter {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
 
 /* Lofi Coding Hero Banner */
@@ -1033,9 +1054,16 @@ input:focus-visible {
 
 .popup-server-btn.active {
   background: var(--accent);
-  color: #fff;
+  color: var(--on-accent);
   font-weight: 600;
 }
+
+.popup-server-btn:hover:not(:disabled) {
+  background: var(--bg-card-hover);
+  color: var(--text-primary);
+}
+
+.popup-server-btn.active:hover:not(:disabled) { background: var(--accent-hover); color: var(--on-accent); }
 
 .popup-episodes-dropdown {
   display: flex;
@@ -1440,7 +1468,7 @@ body::-webkit-scrollbar-thumb,
 button:focus-visible,
 input:focus-visible,
 select:focus-visible {
-  outline: 2px solid var(--accent);
+  outline: 2px solid var(--focus);
   outline-offset: 2px;
 }
 
@@ -1489,3 +1517,26 @@ button:active,
 .hidden {
   display: none !important;
 }
+
+[hidden] { display: none !important; }
+
+.field-error {
+  margin-top: 6px;
+  color: var(--error);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+#direct-url-input[aria-invalid="true"] { border-color: var(--error); }
+
+.native-status { font-family: inherit; }
+.native-status.status-disconnected:hover { background: var(--bg-card-hover); }
+.native-status.status-ready:disabled { opacity: 1; cursor: default; }
+.native-status:active { transform: scale(0.97); }
+
+button:not(:disabled) { transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, opacity 160ms ease, transform 120ms ease; }
+button:not(:disabled):hover { filter: brightness(1.08); }
+button:not(:disabled):active { filter: brightness(.9); }
+button:disabled { opacity: .55; cursor: wait; }
+
+.popup-episodes-container:not(.hidden) { animation: panel-enter 160ms ease-out; }

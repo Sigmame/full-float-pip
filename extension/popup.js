@@ -34,6 +34,7 @@ async function initNativeStatus() {
 
     function setStatus(connected) {
         statusEl.classList.remove('status-unknown', 'status-ready', 'status-disconnected');
+        statusEl.disabled = connected;
         const text = statusEl.querySelector('.status-text');
         if (connected) {
             statusEl.classList.add('status-ready');
@@ -64,6 +65,13 @@ function initDirectFloat() {
     const input = document.getElementById('direct-url-input');
     const pasteBtn = document.getElementById('btn-direct-paste');
     const floatBtn = document.getElementById('btn-direct-float');
+    const error = document.getElementById('direct-url-error');
+    const setError = (message) => {
+        error.textContent = message;
+        error.hidden = !message;
+        input?.setAttribute('aria-invalid', message ? 'true' : 'false');
+    };
+    input?.addEventListener('input', () => setError(''));
 
     pasteBtn?.addEventListener('click', async () => {
         try {
@@ -80,13 +88,24 @@ function initDirectFloat() {
     const triggerFloat = async () => {
         const rawUrl = (input?.value || '').trim();
         if (!rawUrl) {
+            setError('Dán hoặc nhập link video để phát nổi.');
             input?.focus();
             return;
         }
 
+        try {
+            const candidate = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
+            if (!['http:', 'https:'].includes(candidate.protocol) || !candidate.hostname.includes('.')) throw new Error();
+        } catch {
+            setError('Nhập link web hợp lệ, ví dụ https://youtube.com/watch?v=…');
+            input?.focus();
+            return;
+        }
+        setError('');
+
         if (floatBtn) {
             floatBtn.disabled = true;
-            floatBtn.textContent = 'Đang mở...';
+            floatBtn.textContent = 'Đang mở…';
         }
 
         try {
@@ -105,6 +124,7 @@ function initDirectFloat() {
                     floatBtn.textContent = 'Thử lại';
                 }
                 showFloatErrorHint(formatFloatError(res));
+                setError('Không mở được link. Kiểm tra kết nối App rồi thử lại.');
             }
         } catch (err) {
             if (floatBtn) {
@@ -112,6 +132,7 @@ function initDirectFloat() {
                 floatBtn.textContent = 'Thử lại';
             }
             showFloatErrorHint(err?.message || 'Không thể phát nổi link này.');
+            setError('Không mở được link. Kiểm tra kết nối App rồi thử lại.');
         }
     };
 
@@ -326,22 +347,25 @@ async function initTabs() {
         aidubBtn.disabled = true;
         try {
             const nextState = !isAIDub;
-            syncAIDubBtn(nextState);
+            const native = await chrome.runtime.sendMessage({ type: 'NATIVE_COMMAND', action: 'toggleAIDub' });
+            const noNativeWindow = /No active window|Not connected/i.test(native?.error || '');
+            if (!native?.success && !noNativeWindow) {
+                throw new Error(formatFloatError(native));
+            }
+            if (native?.success && typeof native.isAIDubEnabled === 'boolean' && native.isAIDubEnabled !== nextState) {
+                throw new Error('Chế độ lồng tiếng trong cửa sổ nổi chưa đổi. Thử lại trong thanh điều khiển video.');
+            }
             await chrome.storage.local.set({ 'vibe_ai_dubbing_enabled': nextState });
+            syncAIDubBtn(nextState);
+            if (!native?.success) showFloatErrorHint('Đã lưu cho tab Chrome. Mở video nổi để dùng lồng tiếng trong App.');
 
             // Notify active tab content script
             const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
             if (tab?.id) {
-                chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_AI_DUB', enabled: nextState }).catch(() => {});
+                await chrome.tabs.sendMessage(tab.id, { type: 'TOGGLE_AI_DUB', enabled: nextState }).catch(() => {});
             }
-
-            // Notify native companion app
-            chrome.runtime.sendMessage({
-                type: 'NATIVE_COMMAND',
-                action: 'toggleAIDub'
-            }).catch(() => {});
         } catch (e) {
-            // ignore
+            showFloatErrorHint(e?.message || 'Không đổi được lồng tiếng AI. Thử lại.');
         } finally {
             aidubBtn.disabled = false;
         }
@@ -680,7 +704,7 @@ function renderPopupMovies(items) {
         quickBtn?.addEventListener('click', async (e) => {
             e.stopPropagation();
             const original = quickBtn.textContent;
-            quickBtn.textContent = '...';
+            quickBtn.textContent = 'Đang mở…';
             quickBtn.disabled = true;
             try {
                 const ok = await quickFloatMovie(slug, itemSource);
@@ -708,7 +732,8 @@ function renderPopupMovies(items) {
             list.querySelectorAll('.popup-episodes-container').forEach(c => c.classList.add('hidden'));
             list.querySelectorAll('.ep-pick-btn').forEach(b => b.textContent = 'Tập ▾');
 
-            pickBtn.textContent = '...';
+            pickBtn.textContent = 'Đang tải…';
+            pickBtn.disabled = true;
             try {
                 const detail = await MovieService.getDetail(slug, itemSource);
                 renderPopupEpisodes(container, detail);
@@ -716,6 +741,9 @@ function renderPopupMovies(items) {
                 pickBtn.textContent = 'Đóng ▲';
             } catch (err) {
                 pickBtn.textContent = 'Thử lại';
+                showFloatErrorHint('Không tải được danh sách tập. Kiểm tra mạng rồi thử lại.');
+            } finally {
+                pickBtn.disabled = false;
             }
         });
     });

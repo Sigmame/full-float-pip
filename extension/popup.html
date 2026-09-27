@@ -3,7 +3,10 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>VibeFloat</title>
+  <meta name="theme-color" content="#121216">
+  <title>Phát nổi video | VibeFloat</title>
+  <meta name="description" content="Phát nổi video từ tab hiện tại hoặc kho phim trên mọi ứng dụng macOS.">
+  <link rel="icon" href="icons/icon16.png" type="image/png">
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
@@ -22,10 +25,10 @@
           </div>
         </div>
         <div class="header-actions">
-          <div id="native-status" class="native-status status-unknown" title="Trạng thái kết nối Native Companion App">
+          <button id="native-status" class="native-status status-unknown" title="Trạng thái kết nối Native Companion App" type="button" disabled>
             <span class="status-dot"></span>
-            <span class="status-text">Native: Sẵn sàng</span>
-          </div>
+            <span class="status-text">Đang kiểm tra App…</span>
+          </button>
           <button id="popup-aidub-btn" class="popup-aidub-btn active" title="Lồng tiếng Edge AI từ phụ đề (Shift+V)" type="button" aria-label="Lồng tiếng AI: Bật" aria-pressed="true">
             <svg class="aidub-icon" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
               <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
@@ -70,10 +73,11 @@
       <div class="quick-float-box">
         <div class="quick-float-label">Phát nhanh link bất kỳ</div>
         <div class="quick-float-row">
-          <input type="text" id="direct-url-input" placeholder="Dán link YouTube, stream m3u8, video..." autocomplete="off" spellcheck="false">
-          <button id="btn-direct-paste" class="btn-paste" title="Dán từ Clipboard" type="button">Dán</button>
-          <button id="btn-direct-float" class="btn-float-action" type="button">Phát</button>
+          <input type="url" id="direct-url-input" aria-label="Link video để phát nổi" aria-describedby="direct-url-error" placeholder="https://youtube.com/watch?v=…" autocomplete="off" spellcheck="false">
+          <button id="btn-direct-paste" class="btn-direct-paste" title="Dán từ Clipboard" type="button">Dán</button>
+          <button id="btn-direct-float" class="btn-direct-float" type="button">Phát</button>
         </div>
+        <p id="direct-url-error" class="field-error" role="alert" hidden></p>
       </div>
 
       <div class="web-panel-heading">
@@ -133,7 +137,7 @@
           <circle cx="11" cy="11" r="8"></circle>
           <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
         </svg>
-        <input type="text" id="popup-movie-search" placeholder="Tìm phim, diễn viên (gõ / để tìm nhanh)..." autocomplete="off">
+        <input type="search" id="popup-movie-search" aria-label="Tìm phim hoặc diễn viên" placeholder="Tìm phim hoặc diễn viên…" autocomplete="off">
         <button id="popup-search-clear" class="search-clear-btn hidden" type="button" aria-label="Xóa tìm kiếm" title="Xóa tìm kiếm">&times;</button>
       </div>
 
@@ -161,7 +165,7 @@
           </svg>
           Mở kho phim lớn ↗
         </button>
-        <select id="popup-source-select" class="source-mini-select" title="Chọn nguồn phim">
+        <select id="popup-source-select" class="source-mini-select" title="Chọn nguồn phim" aria-label="Chọn nguồn phim">
           <option value="all" selected>Đa nguồn</option>
           <option value="kkphim">KKPhim</option>
           <option value="nguonc">NguonC</option>

@@ -19,6 +19,36 @@ let homeRailResizeObserver = null;
 let favSlugSet = new Set();
 let suggestActiveIdx = -1;
 let suggestItemsCache = [];
+let activeDialog = null;
+let dialogReturnFocus = null;
+
+function setDialogOpen(dialog, open) {
+    if (!dialog) return;
+    if (open) {
+        if (activeDialog === dialog) return;
+        if (activeDialog && activeDialog !== dialog) setDialogOpen(activeDialog, false);
+        dialogReturnFocus = document.activeElement;
+        activeDialog = dialog;
+        dialog.classList.remove('hidden');
+        for (const child of document.querySelector('.app-container').children) {
+            if (child !== dialog) child.inert = true;
+        }
+        (dialog.querySelector('[autofocus]') || dialog.querySelector('button, input'))?.focus();
+    } else {
+        dialog.classList.add('hidden');
+        for (const child of document.querySelector('.app-container').children) child.inert = false;
+        activeDialog = null;
+        dialogReturnFocus?.focus();
+        dialogReturnFocus = null;
+    }
+}
+
+function setOptionalText(id, value) {
+    const element = document.getElementById(id);
+    if (!element) return;
+    element.textContent = value || '';
+    element.hidden = !value;
+}
 
 const FALLBACK_POSTER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='360' viewBox='0 0 240 360'><rect width='240' height='360' fill='%2316161f'/><circle cx='120' cy='160' r='32' fill='%23222230'/><polygon points='114,146 134,160 114,174' fill='%23ffffff'/><text x='50%25' y='216' dominant-baseline='middle' text-anchor='middle' fill='%23888899' font-family='sans-serif' font-weight='600' font-size='13'>VibeFloat</text></svg>";
 
@@ -71,7 +101,6 @@ function navigateView() {
         // Home View with Multi-Sections
         homeView?.classList.remove('hidden');
         gridView?.classList.add('hidden');
-        heroSpotlight?.classList.remove('hidden');
         loadHomePage();
     } else {
         // Specific Category / Filter / Favorites View
@@ -90,6 +119,20 @@ function navigateView() {
 
 // MARK: - UI Initialization
 function initUI() {
+    const mobileMenuBtn = document.getElementById('mobile-menu-btn');
+    const closeMobileMenu = () => {
+        document.body.classList.remove('mobile-menu-open');
+        mobileMenuBtn?.setAttribute('aria-expanded', 'false');
+    };
+    mobileMenuBtn?.addEventListener('click', () => {
+        const open = document.body.classList.toggle('mobile-menu-open');
+        mobileMenuBtn.setAttribute('aria-expanded', String(open));
+    });
+    document.getElementById('mobile-categories')?.addEventListener('click', (event) => {
+        if (event.target.closest('button[data-cat]')) closeMobileMenu();
+    });
+    window.matchMedia('(min-width: 901px)').addEventListener('change', closeMobileMenu);
+
     const searchInput = document.getElementById('search-input');
     const searchClear = document.getElementById('search-clear');
     const searchDropdown = document.getElementById('search-suggestions');
@@ -212,6 +255,7 @@ function initUI() {
     const updateNativeStatusUI = (connected) => {
         if (!nativeStatusEl) return;
         nativeStatusEl.classList.remove('status-unknown', 'status-ready', 'status-disconnected');
+        nativeStatusEl.disabled = connected;
         const text = nativeStatusEl.querySelector('.status-text');
         if (connected) {
             nativeStatusEl.classList.add('status-ready');
@@ -246,19 +290,25 @@ function initUI() {
 
     if (ghostBtn) {
         ghostBtn.addEventListener('click', async () => {
+            ghostBtn.disabled = true;
             try {
                 const res = await chrome.runtime.sendMessage({
                     type: 'NATIVE_COMMAND',
                     action: 'toggleGhost'
                 });
-                if (typeof res?.isGhost === 'boolean') {
+                if (res?.success && typeof res.isGhost === 'boolean') {
                     syncGhostUI(res.isGhost);
-                } else if (res?.success !== false) {
+                } else if (res?.success) {
                     syncGhostUI(!isGhost);
+                } else {
+                    showToast(formatFloatError(res));
+                    return;
                 }
                 showToast(isGhost ? 'Xuyên chuột đang bật: bấm xuyên phim để gõ code' : 'Xuyên chuột đang tắt: phim nhận chuột lại');
             } catch (err) {
-                console.error(err);
+                showToast(err?.message || 'Không đổi được chế độ xuyên chuột. Thử lại.');
+            } finally {
+                ghostBtn.disabled = false;
             }
         });
     }
@@ -271,17 +321,26 @@ function initUI() {
     const directUrlInput = document.getElementById('direct-url-input');
     const directTitleInput = document.getElementById('direct-title-input');
     const directPasteBtn = document.getElementById('btn-direct-paste');
+    const directError = document.getElementById('direct-url-error');
+    const directStatus = document.getElementById('direct-submit-status');
+    const setDirectError = (message) => {
+        directError.textContent = message;
+        directError.hidden = !message;
+        directUrlInput?.setAttribute('aria-invalid', message ? 'true' : 'false');
+    };
+    directUrlInput?.addEventListener('input', () => {
+        setDirectError('');
+        directStatus.textContent = '';
+    });
 
     if (openDirectBtn && directModal) {
         openDirectBtn.addEventListener('click', () => {
-            directModal.classList.remove('hidden');
+            setDialogOpen(directModal, true);
             directUrlInput?.focus();
         });
-        directCloseBtn?.addEventListener('click', () => {
-            directModal.classList.add('hidden');
-        });
+        directCloseBtn?.addEventListener('click', () => setDialogOpen(directModal, false));
         directModal.addEventListener('click', (e) => {
-            if (e.target === directModal) directModal.classList.add('hidden');
+            if (e.target === directModal) setDialogOpen(directModal, false);
         });
 
         directPasteBtn?.addEventListener('click', async () => {
@@ -305,13 +364,26 @@ function initUI() {
         });
 
         const submitDirectStream = async () => {
+            if (directSubmitBtn.disabled) return;
             const url = directUrlInput?.value?.trim();
-            const title = directTitleInput?.value?.trim() || 'Custom Stream';
+            const title = directTitleInput?.value?.trim() || 'Video từ link';
             if (!url) {
-                alert('Vui lòng nhập đường link stream hoặc URL video!');
+                setDirectError('Nhập link video hoặc luồng phát để tiếp tục.');
+                directUrlInput?.focus();
                 return;
             }
-            directModal.classList.add('hidden');
+            try {
+                const parsed = new URL(url);
+                if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocol');
+            } catch {
+                setDirectError('Dùng link bắt đầu bằng https:// hoặc http://.');
+                directUrlInput?.focus();
+                return;
+            }
+            setDirectError('');
+            directSubmitBtn.disabled = true;
+            directSubmitBtn.querySelector('span').textContent = 'Đang mở…';
+            directStatus.textContent = 'Đang gửi link đến ứng dụng nổi…';
             const isM3u8 = url.includes('.m3u8') || url.includes('.mp4');
             const isYt = url.includes('youtube.com') || url.includes('youtu.be');
             const videoInfo = isYt
@@ -325,11 +397,18 @@ function initUI() {
                     height: 360,
                     currentTime: 0
                 };
-            await chrome.runtime.sendMessage({
-                type: 'FLOAT_VIDEO_REQUEST',
-                videoInfo
-            });
-            showToast(`Đang phát nổi "${title}"`);
+            try {
+                const result = await chrome.runtime.sendMessage({ type: 'FLOAT_VIDEO_REQUEST', videoInfo });
+                if (!result?.success) throw new Error(formatFloatError(result));
+                directStatus.textContent = 'Đã mở cửa sổ nổi.';
+                setDialogOpen(directModal, false);
+                showToast(`Đang phát nổi "${title}"`);
+            } catch (error) {
+                directStatus.textContent = error?.message || 'Không mở được video. Kiểm tra kết nối App rồi thử lại.';
+            } finally {
+                directSubmitBtn.disabled = false;
+                directSubmitBtn.querySelector('span').textContent = 'Phát nổi trên màn hình';
+            }
         };
 
         directSubmitBtn?.addEventListener('click', submitDirectStream);
@@ -484,23 +563,29 @@ function initUI() {
 
     // Shortcuts Modal
     const shortcutsModal = document.getElementById('shortcuts-modal');
-    const toggleShortcuts = () => {
-        shortcutsModal?.classList.toggle('hidden');
-    };
+    const toggleShortcuts = () => setDialogOpen(shortcutsModal, shortcutsModal.classList.contains('hidden'));
     document.getElementById('btn-shortcuts')?.addEventListener('click', toggleShortcuts);
     document.getElementById('shortcuts-modal-close-btn')?.addEventListener('click', () => {
-        shortcutsModal?.classList.add('hidden');
+        setDialogOpen(shortcutsModal, false);
     });
     shortcutsModal?.addEventListener('click', (e) => {
-        if (e.target.id === 'shortcuts-modal') shortcutsModal.classList.add('hidden');
+        if (e.target.id === 'shortcuts-modal') setDialogOpen(shortcutsModal, false);
     });
 
     document.addEventListener('keydown', (e) => {
         const isInput = ['INPUT', 'TEXTAREA', 'SELECT'].includes(document.activeElement?.tagName);
         if (e.key === 'Escape') {
-            closeModal();
-            shortcutsModal?.classList.add('hidden');
-            document.getElementById('direct-stream-modal')?.classList.add('hidden');
+            if (activeDialog) setDialogOpen(activeDialog, false);
+            closeMobileMenu();
+        }
+        if (e.key === 'Tab' && activeDialog) {
+            const focusable = [...activeDialog.querySelectorAll('button:not(:disabled), input:not(:disabled), select:not(:disabled), [tabindex="0"]')]
+                .filter(element => !element.hidden && element.getClientRects().length);
+            if (focusable.length) {
+                const first = focusable[0], last = focusable.at(-1);
+                if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+                else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+            }
         }
         if (!isInput && e.key === '?') {
             e.preventDefault();
@@ -670,12 +755,19 @@ function renderSearchSuggestions(items, query) {
 }
 
 // MARK: - Home Page with Multi-Sections
+function renderHomeUnavailable(container, message) {
+    container.innerHTML = `<div class="feed-empty" role="status"><p>${escapeHtml(message)}</p><button type="button" class="state-retry-btn">Thử tải lại</button></div>`;
+    container.querySelector('.state-retry-btn')?.addEventListener('click', loadHomePage);
+}
+
 async function loadHomePage() {
     const container = document.getElementById('home-sections-container');
     if (!container) return;
+    document.getElementById('hero-spotlight')?.classList.add('hidden');
 
     // Show skeletons
     container.innerHTML = `
+        <p class="home-loading" role="status">Đang tải kho phim…</p>
         <div class="home-section-skeleton"></div>
         <div class="home-section-skeleton"></div>
         <div class="home-section-skeleton"></div>
@@ -694,6 +786,11 @@ async function loadHomePage() {
         } else {
             stopHeroRotation();
             document.getElementById('hero-spotlight')?.classList.add('hidden');
+        }
+
+        if (!homeData.sections?.length) {
+            renderHomeUnavailable(container, 'Chưa có phim để hiển thị. Hãy thử nguồn khác hoặc tải lại.');
+            return;
         }
 
         // Render each category rail
@@ -785,9 +882,7 @@ async function loadHomePage() {
 
     } catch (e) {
         console.error('Failed to load home sections:', e);
-        container.innerHTML = `<div style="text-align: center; color: #ff5555; padding: 48px;">
-            Lỗi khi tải trang chủ từ nguồn ${currentSource.toUpperCase()}. Hãy thử chọn nguồn khác.
-        </div>`;
+        renderHomeUnavailable(container, 'Không tải được kho phim. Kiểm tra kết nối rồi thử lại.');
     }
     // The home sections just loaded; check they took their skeletons away.
     auditTransientNodes(container, 'loading the home sections', true);
@@ -824,14 +919,6 @@ function renderMovieCardsHtml(items, opts = {}) {
         const imageKind = opts.isRail || currentViewMode === 'view-cinema' ? 'wide' : 'poster';
         const cardClass = `movie-card${opts.isRail ? ' movie-card-rail' : ''}${opts.isTop10 ? ' movie-card-top10' : ''}`;
 
-        let matchScore = 95;
-        if (item.rating) {
-            matchScore = Math.min(99, Math.max(88, Math.round(Number(item.rating) * 10)));
-        } else if (item.slug) {
-            const hash = item.slug.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
-            matchScore = 93 + (hash % 6);
-        }
-
         return `
             <div class="${cardClass}" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" role="group" aria-label="${escapeAttr(item.name)}" tabindex="0">
                 <div class="movie-poster-wrap">
@@ -854,14 +941,10 @@ function renderMovieCardsHtml(items, opts = {}) {
                 </div>
                 <div class="movie-info">
                     <div class="movie-title" title="${escapeAttr(item.name)}">${escapeHtml(item.name)}</div>
-                    <div class="card-meta-row">
-                        <span class="card-match">${matchScore}% Phù hợp</span>
-                        <span class="card-age">16+</span>
-                        <span class="card-hd">${escapeHtml(item.quality || 'FHD')}</span>
-                    </div>
+                    ${item.quality ? `<div class="card-meta-row"><span class="card-hd">${escapeHtml(item.quality)}</span></div>` : ''}
                     <div class="movie-origin">${escapeHtml(item.origin_name || item.year || '')}</div>
                     <div class="movie-footer">
-                        <span>${item.year ? 'Năm ' + escapeHtml(item.year) : escapeHtml(item.quality || 'FHD')}</span>
+                        ${item.year ? `<span>Năm ${escapeHtml(item.year)}</span>` : ''}
                         <button type="button" class="card-quick-float card-quick-float-text" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" title="Phát nổi">Phát nổi</button>
                     </div>
                 </div>
@@ -886,8 +969,8 @@ function bindCardClicks(container) {
             const source = btn.dataset.source || currentSource;
             const labelEl = btn.querySelector('span');
             const original = labelEl ? labelEl.textContent : btn.textContent;
-            if (labelEl) labelEl.textContent = '...';
-            else btn.textContent = '...';
+            if (labelEl) labelEl.textContent = 'Đang mở…';
+            else btn.textContent = 'Đang mở…';
             btn.disabled = true;
             try {
                 const ok = await quickFloatMovie(slug, source);
@@ -898,6 +981,7 @@ function bindCardClicks(container) {
             } catch (err) {
                 if (labelEl) labelEl.textContent = 'Thử lại';
                 else btn.textContent = 'Thử lại';
+                showToast(err?.message || 'Không mở được phim. Kiểm tra kết nối rồi thử lại.');
             } finally {
                 btn.disabled = false;
                 setTimeout(() => {
@@ -1023,7 +1107,7 @@ async function quickFloatMovie(slug, source) {
                 showToast('Đang phát nổi Lofi / Live YouTube');
                 return true;
             }
-            alert(formatFloatError(res));
+            showToast(formatFloatError(res));
             return false;
         }
     }
@@ -1194,21 +1278,18 @@ function renderHeroSpotlight(spot, opts = {}) {
     }
 
     document.getElementById('hero-title').textContent = spot.name;
-    document.getElementById('hero-origin').textContent = `${spot.origin_name || ''} · Năm ${spot.year || '2026'}`;
-    document.getElementById('hero-desc').textContent = spot.description || 'Bom tấn chiếu rạp chọn lọc với chất lượng hình ảnh sắc nét và bản lồng tiếng / thuyết minh chuẩn điện ảnh.';
+    document.getElementById('hero-origin').textContent = [spot.origin_name, spot.year].filter(Boolean).join(' · ');
+    document.getElementById('hero-desc').textContent = spot.description || 'Chưa có mô tả cho phim này.';
 
     const ratingEl = document.getElementById('hero-rating');
     if (ratingEl) {
-        ratingEl.textContent = spot.rating ? spot.rating : '—';
+        ratingEl.textContent = spot.rating || '';
+        ratingEl.hidden = !spot.rating;
     }
 
     const matchEl = document.getElementById('hero-match');
     if (matchEl) {
-        let matchScore = 98;
-        if (spot.rating) {
-            matchScore = Math.min(99, Math.max(90, Math.round(Number(spot.rating) * 10)));
-        }
-        matchEl.textContent = `${matchScore}% Phù hợp`;
+        matchEl.hidden = true;
     }
 
     const audioBadgeEl = document.getElementById('hero-audio-badge');
@@ -1216,7 +1297,8 @@ function renderHeroSpotlight(spot, opts = {}) {
         if (spot.hasThuyetMinh && spot.hasLongTieng) audioBadgeEl.textContent = 'TM + LT';
         else if (spot.hasThuyetMinh) audioBadgeEl.textContent = 'Thuyết Minh';
         else if (spot.hasLongTieng) audioBadgeEl.textContent = 'Lồng Tiếng';
-        else audioBadgeEl.textContent = 'Vietsub FHD';
+        else audioBadgeEl.hidden = true;
+        if (spot.hasThuyetMinh || spot.hasLongTieng) audioBadgeEl.hidden = false;
     }
 
     const heroAidubBtn = document.getElementById('hero-aidub-btn');
@@ -1265,10 +1347,10 @@ async function loadContinueWatching() {
             ? `<div class="continue-progress"><div class="continue-progress-bar" style="width:${pct}%"></div></div>`
             : '';
         return `
-        <div class="continue-card" data-idx="${idx}" title="Phát nổi tiếp — ${escapeAttr(item.name)}" tabindex="0" role="button">
+        <div class="continue-card" data-idx="${idx}" title="Phát nổi tiếp — ${escapeAttr(item.name)}">
             <div class="continue-thumb-wrap">
                 <img class="continue-thumb" loading="lazy" ${MovieImages.attr(item, 'wide')} width="280" height="158" alt="">
-                <button type="button" class="continue-play-overlay" title="Phát tiếp">
+                <button type="button" class="continue-play-overlay" title="Phát tiếp" aria-label="Phát tiếp ${escapeAttr(item.name)}">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
                 </button>
                 <button type="button" class="continue-delete-btn" data-slug="${escapeAttr(item.slug)}" title="Xóa khỏi danh sách xem tiếp" aria-label="Xóa">&times;</button>
@@ -1295,19 +1377,13 @@ async function loadContinueWatching() {
                     showToast(`Đang phát tiếp "${item.name} — ${item.epName || ''}"`);
                 }
             } catch (err) {
-                alert('Lỗi: ' + err.message);
+                showToast('Không phát tiếp được phim. Kiểm tra kết nối rồi thử lại.');
             }
         };
 
         card.addEventListener('click', (e) => {
             if (e.target.closest('.continue-delete-btn')) return;
             handleCardAction();
-        });
-        card.addEventListener('keydown', (e) => {
-            if (['Enter', ' '].includes(e.key) && !e.target.closest('.continue-delete-btn')) {
-                e.preventDefault();
-                handleCardAction();
-            }
         });
     });
 
@@ -1388,7 +1464,7 @@ async function floatContinueItem(item) {
         }
     });
     if (res?.success) return true;
-    alert(formatFloatError(res));
+    showToast(formatFloatError(res));
     return false;
 }
 
@@ -1786,14 +1862,14 @@ async function loadFavorites() {
 // MARK: - Open Movie Detail Modal
 async function openMovieDetail(slug, source = currentSource) {
     const modal = document.getElementById('movie-modal');
-    modal?.classList.remove('hidden');
+    setDialogOpen(modal, true);
 
     // Loading state in modal
-    document.getElementById('modal-title').textContent = 'Đang tải thông tin phim...';
+    document.getElementById('modal-title').textContent = 'Đang tải thông tin phim…';
     document.getElementById('modal-origin').textContent = '';
     document.getElementById('modal-desc').textContent = '';
     document.getElementById('server-tabs').innerHTML = '';
-    document.getElementById('episodes-grid').innerHTML = '<span style="color: var(--text-muted); padding: 12px;">Đang tải danh sách tập phim...</span>';
+    document.getElementById('episodes-grid').innerHTML = '<span class="state-message">Đang tải danh sách tập phim…</span>';
 
     try {
         const detail = await MovieService.getDetail(slug, source);
@@ -1805,15 +1881,14 @@ async function openMovieDetail(slug, source = currentSource) {
         const modalBackdrop = document.getElementById('modal-backdrop-img');
         MovieImages.apply(modalPoster, detail, 'poster');
         MovieImages.apply(modalBackdrop, { poster: detail.thumb, thumb: detail.poster }, 'hero');
-        document.getElementById('modal-year').textContent = detail.year || '2026';
-        document.getElementById('modal-quality').textContent = detail.quality || 'FHD';
-        document.getElementById('modal-current-ep').textContent = detail.episode_current || 'Full';
-        document.getElementById('modal-rating').textContent = detail.rating ? detail.rating : '8.8';
-        document.getElementById('modal-source-badge').textContent = (detail.source || source).toUpperCase();
-
-        document.getElementById('modal-time').textContent = detail.time ? detail.time : 'Chuẩn điện ảnh';
-        document.getElementById('modal-genres').textContent = detail.genres?.length ? detail.genres.join(', ') : 'Phim Điện Ảnh';
-        document.getElementById('modal-countries').textContent = detail.countries?.length ? detail.countries.join(', ') : 'Quốc tế';
+        setOptionalText('modal-year', detail.year);
+        setOptionalText('modal-quality', detail.quality);
+        setOptionalText('modal-current-ep', detail.episode_current);
+        setOptionalText('modal-rating', detail.rating);
+        setOptionalText('modal-source-badge', detail.source || source);
+        setOptionalText('modal-time', detail.time);
+        setOptionalText('modal-genres', detail.genres?.join(', '));
+        setOptionalText('modal-countries', detail.countries?.join(', '));
 
         document.getElementById('modal-desc').textContent = detail.description || 'Chưa có tóm tắt cho bộ phim này.';
 
@@ -1863,9 +1938,17 @@ async function openMovieDetail(slug, source = currentSource) {
         }
 
         renderEpisodes(detail.episodes, continueEntry);
+        if (!modal.contains(document.activeElement)) {
+            modal.querySelector('.server-tab-btn, .ep-btn, #modal-close-btn')?.focus();
+        }
     } catch (err) {
         console.error('Failed to get detail:', err);
-        document.getElementById('modal-desc').textContent = 'Lỗi khi tải chi tiết phim từ máy chủ.';
+        currentMovie = null;
+        document.getElementById('modal-title').textContent = 'Không tải được phim';
+        document.getElementById('modal-desc').textContent = 'Kiểm tra kết nối mạng rồi thử lại.';
+        document.getElementById('server-tabs').innerHTML = '';
+        document.getElementById('episodes-grid').innerHTML = '<button type="button" class="state-retry-btn">Thử tải lại</button>';
+        document.querySelector('#episodes-grid .state-retry-btn')?.addEventListener('click', () => openMovieDetail(slug, source));
     }
 }
 
@@ -1911,6 +1994,7 @@ function renderEpisodes(episodes, continueEntry = null) {
                 activeServerIdx = newIdx;
                 activeChunk = 0;
                 renderServer(newIdx);
+                tabsContainer.querySelector(`[data-idx="${newIdx}"]`)?.focus();
             });
         });
 
@@ -1965,6 +2049,7 @@ function renderEpisodes(episodes, continueEntry = null) {
             btn.addEventListener('click', (e) => {
                 activeChunk = parseInt(e.currentTarget.dataset.chunk);
                 renderServer(sIdx);
+                grid.querySelector(`[data-chunk="${activeChunk}"]`)?.focus();
             });
         });
 
@@ -2029,12 +2114,12 @@ async function floatEpisode(ep, movie, server, opts = {}) {
             }
             return true;
         } else {
-            alert(formatFloatError(res));
+            showToast(formatFloatError(res));
             return false;
         }
     } catch (err) {
         console.error('Float request failed:', err);
-        alert('Lỗi: ' + err.message);
+        showToast(err?.message || 'Không mở được video. Thử lại.');
         return false;
     }
 }
@@ -2060,19 +2145,21 @@ function showToast(message) {
 
     const toast = document.createElement('div');
     toast.className = 'vibe-toast';
+    toast.setAttribute('role', 'status');
+    toast.setAttribute('aria-live', 'polite');
     toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
     document.body.appendChild(toast);
 
     setTimeout(() => {
         toast.style.opacity = '0';
         toast.style.transform = 'translateY(10px)';
-        toast.style.transition = 'all 0.3s ease';
+        toast.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
         setTimeout(() => toast.remove(), 350);
     }, 3500);
 }
 
 function closeModal() {
-    document.getElementById('movie-modal')?.classList.add('hidden');
+    if (activeDialog?.id === 'movie-modal') setDialogOpen(activeDialog, false);
     currentMovie = null;
 }
 

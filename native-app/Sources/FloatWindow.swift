@@ -15,11 +15,11 @@ import AVFoundation
 // looking like the rest of them.
 private enum VibeTheme {
     /// One accent carries "on", selection and progress.
-    static let accent = NSColor(srgbRed: 1.00, green: 0.27, blue: 0.38, alpha: 1.0)
+    static let accent = NSColor(srgbRed: 1.00, green: 0.231, blue: 0.361, alpha: 1.0)
 
     static let chrome = NSColor(white: 0.07, alpha: 0.62)
     static let chromeStrong = NSColor(white: 0.06, alpha: 0.86)
-    static let stroke = NSColor(white: 1.0, alpha: 0.10)
+    static let stroke = NSColor(white: 1.0, alpha: 0.14)
     static let strokeStrong = NSColor(white: 1.0, alpha: 0.16)
 
     static let icon = NSColor(white: 0.96, alpha: 1.0)
@@ -144,6 +144,8 @@ private final class PlaybackToast: NSView {
 
 private class LoadingOverlayView: NSView {
     var spinnerLayer: CALayer?
+    var retryAction: (() -> Void)?
+    private let retryButton = NSButton(title: "Thử tải lại", target: nil, action: nil)
     /// "Đang tải…" under the spinner: a bare arc on a black field reads as a
     /// hang, and a word is cheaper than a HUD for the same information.
     let caption = NSTextField(labelWithString: "Đang tải…")
@@ -156,23 +158,52 @@ private class LoadingOverlayView: NSView {
         caption.textColor = VibeTheme.iconMuted
         caption.font = VibeTheme.Font.label
         caption.alignment = .center
-        caption.lineBreakMode = .byTruncatingTail
+        caption.lineBreakMode = .byWordWrapping
+        caption.maximumNumberOfLines = 2
         addSubview(caption)
+        retryButton.target = self
+        retryButton.action = #selector(retryLoading)
+        retryButton.bezelStyle = .rounded
+        retryButton.font = VibeTheme.Font.label
+        retryButton.bezelColor = VibeTheme.accent
+        retryButton.contentTintColor = VibeTheme.onAccent
+        retryButton.isHidden = true
+        addSubview(retryButton)
+    }
+
+    func showError() {
+        spinnerLayer?.isHidden = true
+        caption.stringValue = "Không tải được video. Kiểm tra mạng rồi thử lại."
+        caption.textColor = VibeTheme.icon
+        retryButton.isHidden = false
+        needsLayout = true
+    }
+
+    @objc private func retryLoading() {
+        caption.stringValue = "Đang tải…"
+        caption.textColor = VibeTheme.iconMuted
+        retryButton.isHidden = true
+        spinnerLayer?.isHidden = false
+        retryAction?()
     }
 
     required init?(coder: NSCoder) { fatalError() }
 
     override func layout() {
         super.layout()
-        guard let spinner = spinnerLayer else { return }
-        CATransaction.begin()
-        CATransaction.setDisableActions(true)
-        spinner.position = CGPoint(x: bounds.width / 2, y: bounds.height / 2 + 14)
-        CATransaction.commit()
+        if let spinner = spinnerLayer {
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            spinner.position = CGPoint(x: bounds.width / 2, y: bounds.height / 2 + 14)
+            CATransaction.commit()
+        }
         caption.frame = NSRect(x: VibeTheme.Space.lg,
-                               y: bounds.height / 2 - 24,
+                               y: bounds.height / 2 - 36,
                                width: max(0, bounds.width - VibeTheme.Space.lg * 2),
-                               height: 16)
+                               height: 32)
+        retryButton.frame = NSRect(x: max(0, (bounds.width - 120) / 2),
+                                   y: bounds.height / 2 - 70,
+                                   width: min(120, bounds.width), height: 32)
     }
 }
 
@@ -870,7 +901,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
     }
 
     private var isAIDubEnabled: Bool = FloatWindow.preferredAIDubEnabled
-    var isAIDubbingEnabled: Bool { return isAIDubEnabled }
+    var isAIDubbingEnabled: Bool { return isOfflineDubEnabled || isAIDubEnabled }
     struct DubItem {
         let text: String
         let normalized: String
@@ -3074,7 +3105,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
             NSLog("[FloatVideo] Direct embed failed, falling back to iframe embed host: \(Self.loggableURL(safeEmbed.absoluteString))")
             return
         }
-        hideLoadingOverlay()
+        showNavigationError(error)
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -3091,7 +3122,26 @@ class FloatWindow: NSPanel, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
             NSLog("[FloatVideo] Direct embed provisional failed, falling back to iframe embed host: \(Self.loggableURL(safeEmbed.absoluteString))")
             return
         }
-        hideLoadingOverlay()
+        showNavigationError(error)
+    }
+
+    private func showNavigationError(_ error: Error) {
+        let nsError = error as NSError
+        if nsError.domain == NSURLErrorDomain && nsError.code == NSURLErrorCancelled { return }
+        let overlay: LoadingOverlayView
+        if let existing = loadingOverlay as? LoadingOverlayView {
+            overlay = existing
+        } else {
+            overlay = LoadingOverlayView(frame: webView.frame)
+            overlay.wantsLayer = true
+            overlay.layer?.backgroundColor = NSColor.black.cgColor
+            overlay.autoresizingMask = [.width, .height]
+            contentView?.addSubview(overlay, positioned: .above, relativeTo: webView)
+            loadingOverlay = overlay
+        }
+        overlay.alphaValue = 1
+        overlay.retryAction = { [weak self] in _ = self?.webView.reload() }
+        overlay.showError()
     }
 
     /// Direct m3u8/mp4 failed (expired token, 403). The embed page is the
@@ -5400,13 +5450,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
         if !isPinned {
             placeAwayFromCode()
         }
-        // Apply last vibe size preset when reasonable (not already near that width).
-        let preset = Self.savedSizePreset
+        // Start each new floating window at the medium size. Size choices made
+        // while this window is open still apply until the next window opens.
+        let preset: SizePreset = .standard
+        Self.persistSizePreset(preset)
         selectedSizePreset = preset
         refreshSizePresetChipStyles()
-        if preset != .pocket, let target = preset.targetWidth, abs(frame.width - target) > 48 {
-            // fromUser: false — this is the remembered size, not a fresh choice,
-            // so it must not lock out the automatic fit-to-video.
+        if let target = preset.targetWidth, abs(frame.width - target) > 1 {
+            // The default size must not lock out the automatic fit-to-video.
             applySizePreset(preset, fromUser: false)
         }
         ensureVisibleOnScreen()
@@ -6835,10 +6886,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
         showHUD(Self.preferredHugVideoFrame ? "Ôm sát khung phát: Bật" : "Ôm sát khung phát: Tắt")
     }
 
-    /// `fromUser` separates "the user picked this size" from "we restored their
-    /// last size on open". Only the former should stop the automatic fit —
-    /// otherwise the preset applied by `show()` would disable hugging on every
-    /// single float, before the video even appears.
+    /// `fromUser` separates an explicit size choice from the default applied
+    /// on open. Only an explicit choice should stop the automatic fit.
     func applySizePreset(_ preset: SizePreset, fromUser: Bool = true) {
         noteStripInteraction()
         if isWindowFullScreen {

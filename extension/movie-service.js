@@ -1,5 +1,5 @@
 // movie-service.js — Unified API for KKPhim (phimapi.com) and NguonC (phim.nguonc.com)
-// High-frequency fresh updates (2025-2026 prioritized, eliminates stale 2014-2019 titles).
+// High-frequency fresh updates prioritize recent titles.
 // Supports Cinema, Thuyết Minh, Lồng Tiếng, Home Sections, and Instant Live Search.
 
 const MovieImages = {
@@ -658,7 +658,7 @@ const MovieService = {
         try {
             const chieuRapItems = await this._getKKPhimList('chieurap', 1);
             if (chieuRapItems && chieuRapItems.length > 0) {
-                // Find latest 2026/2025 movie with both poster and backdrop
+                // Prefer an item with both poster and backdrop.
                 const top = chieuRapItems.find(it => it.poster && it.thumb) || chieuRapItems[0];
                 const detail = await this.getDetail(top.slug, top.source || 'kkphim');
                 return { ...top, ...detail };
@@ -675,12 +675,13 @@ const MovieService = {
 
         try {
             if (category === 'moi') {
-                // To avoid stale 2014-2019 movies on page 1, fetch fresh in-theater 2026 & new series 2026
+                // Prefer current-year releases without hard-coding a calendar year.
                 if (page === 1) {
+                    const year = new Date().getFullYear();
                     const [crRes, boRes, leRes] = await Promise.allSettled([
                         fetch('https://phimapi.com/v1/api/danh-sach/phim-chieu-rap?page=1').then(r => r.json()),
-                        fetch('https://phimapi.com/v1/api/danh-sach/phim-bo?year=2026&page=1').then(r => r.json()),
-                        fetch('https://phimapi.com/v1/api/danh-sach/phim-le?year=2026&page=1').then(r => r.json())
+                        fetch(`https://phimapi.com/v1/api/danh-sach/phim-bo?year=${year}&page=1`).then(r => r.json()),
+                        fetch(`https://phimapi.com/v1/api/danh-sach/phim-le?year=${year}&page=1`).then(r => r.json())
                     ]);
 
                     const crItems = (crRes.status === 'fulfilled' && crRes.value?.data?.items) || [];
@@ -702,13 +703,14 @@ const MovieService = {
                 items = data?.data?.items || [];
             } else if (category === 'bo') {
                 if (page === 1) {
-                    const [res2026, resAll] = await Promise.allSettled([
-                        fetch('https://phimapi.com/v1/api/danh-sach/phim-bo?year=2026&page=1').then(r => r.json()),
+                    const year = new Date().getFullYear();
+                    const [resCurrent, resAll] = await Promise.allSettled([
+                        fetch(`https://phimapi.com/v1/api/danh-sach/phim-bo?year=${year}&page=1`).then(r => r.json()),
                         fetch('https://phimapi.com/v1/api/danh-sach/phim-bo?page=1').then(r => r.json())
                     ]);
-                    const items2026 = (res2026.status === 'fulfilled' && res2026.value?.data?.items) || [];
+                    const itemsCurrent = (resCurrent.status === 'fulfilled' && resCurrent.value?.data?.items) || [];
                     const itemsAll = (resAll.status === 'fulfilled' && resAll.value?.data?.items) || [];
-                    const combined = [...items2026, ...itemsAll];
+                    const combined = [...itemsCurrent, ...itemsAll];
                     const norm = combined.map(it => this._normalizeKKPhimItem(it));
                     return this._sortNewestFirst(this._deduplicateList(norm));
                 } else {
@@ -718,13 +720,14 @@ const MovieService = {
                 }
             } else if (category === 'le') {
                 if (page === 1) {
-                    const [res2026, res2025] = await Promise.allSettled([
-                        fetch('https://phimapi.com/v1/api/danh-sach/phim-le?year=2026&page=1').then(r => r.json()),
-                        fetch('https://phimapi.com/v1/api/danh-sach/phim-le?year=2025&page=1').then(r => r.json())
+                    const year = new Date().getFullYear();
+                    const [resCurrent, resPrevious] = await Promise.allSettled([
+                        fetch(`https://phimapi.com/v1/api/danh-sach/phim-le?year=${year}&page=1`).then(r => r.json()),
+                        fetch(`https://phimapi.com/v1/api/danh-sach/phim-le?year=${year - 1}&page=1`).then(r => r.json())
                     ]);
-                    const items2026 = (res2026.status === 'fulfilled' && res2026.value?.data?.items) || [];
-                    const items2025 = (res2025.status === 'fulfilled' && res2025.value?.data?.items) || [];
-                    const combined = [...items2026, ...items2025];
+                    const itemsCurrent = (resCurrent.status === 'fulfilled' && resCurrent.value?.data?.items) || [];
+                    const itemsPrevious = (resPrevious.status === 'fulfilled' && resPrevious.value?.data?.items) || [];
+                    const combined = [...itemsCurrent, ...itemsPrevious];
                     const norm = combined.map(it => this._normalizeKKPhimItem(it));
                     return this._sortNewestFirst(this._deduplicateList(norm));
                 } else {
@@ -734,11 +737,12 @@ const MovieService = {
                 }
             } else if (category === 'hoathinh') {
                 if (page === 1) {
-                    const res2026 = await fetch('https://phimapi.com/v1/api/danh-sach/hoat-hinh?year=2026&page=1');
-                    const data2026 = await res2026.json();
-                    const items2026 = data2026?.data?.items || [];
-                    if (items2026.length > 0) {
-                        return items2026.map(it => this._normalizeKKPhimItem(it));
+                    const year = new Date().getFullYear();
+                    const recentResponse = await fetch(`https://phimapi.com/v1/api/danh-sach/hoat-hinh?year=${year}&page=1`);
+                    const recentData = await recentResponse.json();
+                    const recentItems = recentData?.data?.items || [];
+                    if (recentItems.length > 0) {
+                        return recentItems.map(it => this._normalizeKKPhimItem(it));
                     }
                 }
                 const res = await fetch(`https://phimapi.com/v1/api/danh-sach/hoat-hinh?page=${page}`);
@@ -828,7 +832,7 @@ const MovieService = {
             thumb: thumb,
             poster: poster,
             source: 'kkphim',
-            quality: item.quality || 'FHD',
+            quality: item.quality || '',
             lang: langStr || 'Vietsub',
             hasThuyetMinh: hasThuyetMinh,
             hasLongTieng: hasLongTieng,
@@ -884,7 +888,7 @@ const MovieService = {
             thumb: thumb,
             year: movie.year || '',
             time: movie.time || '',
-            quality: movie.quality || 'FHD',
+            quality: movie.quality || '',
             lang: langStr || 'Vietsub',
             hasThuyetMinh: hasThuyetMinh,
             hasLongTieng: hasLongTieng,
