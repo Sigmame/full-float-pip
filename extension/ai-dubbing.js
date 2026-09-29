@@ -7,7 +7,7 @@
  *  - Intelligent Audio Ducking (Dips video background volume to 28% during speech, restores smoothly)
  *  - High-Fidelity Vietnamese Speech Validation (Filters out ads, English blurbs, URLs)
  *  - Conflict Resolution & Pre-buffering Queue (No overlap, no lag)
- *  - Hotkey toggle Shift+V & Global API
+ *  - Global API for dubbing controls
  */
 
 (function (root, factory) {
@@ -110,18 +110,7 @@
                 }, 1200);
             }
 
-            // Global hotkey Shift+V
             if (typeof window !== 'undefined') {
-                window.addEventListener('keydown', (e) => {
-                    if (e.shiftKey && (e.key === 'V' || e.key === 'v') && !e.metaKey && !e.ctrlKey && !e.altKey) {
-                        const targetTag = e.target?.tagName?.toLowerCase();
-                        if (targetTag !== 'input' && targetTag !== 'textarea') {
-                            e.preventDefault();
-                            this.toggle();
-                        }
-                    }
-                });
-
                 // Cross-frame relay: listen for cues from embedded iframes & main-world interceptor
                 window.addEventListener('message', (e) => {
                     if (!e.data) return;
@@ -267,7 +256,7 @@
                 ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="#ff4757"><path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Zm5 10a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21H9v2h6v-2h-2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>'
                 : '<svg width="16" height="16" viewBox="0 0 24 24" fill="#999"><path d="m19 11-1.3-.2a6.9 6.9 0 0 1-2.2 4.1l1.4 1.4A8.9 8.9 0 0 0 19 11ZM4.3 3 3 4.3l4.3 4.3V12a5 5 0 0 0 7.7 4.2l1.7 1.7A6.9 6.9 0 0 1 12 19a7 7 0 0 1-7-7H3a9 9 0 0 0 8 8.9V23h2v-2.1a9 9 0 0 0 4.3-1.4l2.4 2.4 1.3-1.3L4.3 3ZM12 4a3 3 0 0 1 3 3v4.6l2 2V7a5 5 0 0 0-7.7-4.2l1.6 1.6A2.9 2.9 0 0 1 12 4Z"/></svg>';
 
-            toast.innerHTML = `${iconSvg} <span>Lồng tiếng Edge AI: ${stateText} <span style="font-size:11px; opacity:0.6; margin-left:4px;">(Shift+V)</span></span>`;
+            toast.innerHTML = `${iconSvg} <span>Lồng tiếng Edge AI: ${stateText}</span>`;
             toast.style.opacity = '1';
             toast.style.transform = 'translateY(0)';
 

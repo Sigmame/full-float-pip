@@ -1674,7 +1674,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
         refreshAudioBoostButtonStyle()
 
         let dubOnStrip = makeControlButton(symbolName: "waveform.badge.plus", action: #selector(toggleOfflineDubbing), pointSize: 12)
-        dubOnStrip.toolTip = "Offline Dub — dựng audio trước rồi phát (Shift+V)"
+        dubOnStrip.toolTip = "Offline Dub — dựng audio trước rồi phát"
         dubOnStrip.isHidden = true
         controlBarView.addSubview(dubOnStrip)
         stripDubButton = dubOnStrip
@@ -8741,7 +8741,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
         setButtonSymbol(btn, isOfflineDubEnabled ? "waveform.badge.plus" : (isAIDubEnabled ? "waveform.badge.mic" : "waveform"), pointSize: 12)
         btn.toolTip = isOfflineDubEnabled
             ? "Offline Dub đang bật — bấm Thêm để tắt"
-            : "Offline Dub — dựng audio trước rồi phát (Shift+V)"
+            : "Offline Dub — dựng audio trước rồi phát"
     }
 
     private func setupAIDubbing() {
@@ -9654,12 +9654,6 @@ class FloatWindow: NSPanel, WKNavigationDelegate, WKUIDelegate, WKScriptMessageH
                 toggleManualBannerBlur()
             } else {
                 toggleBossHide()
-            }
-        case 9: // V -> Shift+V -> Toggle AI Dubbing
-            if event.modifierFlags.contains(.shift) {
-                toggleAIDubbing()
-            } else {
-                super.keyDown(with: event)
             }
         case 24, 69: // = / keypad + -> grow
             growWindow()
