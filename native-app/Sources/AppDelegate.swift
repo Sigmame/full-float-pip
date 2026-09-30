@@ -252,6 +252,22 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
             let url = msg["url"] as? String ?? ""
             let videoSrc = msg["videoSrc"] as? String ?? ""
             let embedUrl = msg["embedUrl"] as? String ?? ""
+            // Native messaging must enforce the same document boundary as Chrome.
+            // Direct media may use a CDN, but arbitrary web pages are never opened.
+            let curatedMovieID = FloatWindow.curatedYouTubeMovieID(url)
+            let curatedYouTubeEmbed = msg["site"] as? String == "youtube"
+                && msg["preferEmbed"] as? Bool == true
+                && curatedMovieID != nil
+                && FloatWindow.curatedYouTubeMovieID(embedUrl) == curatedMovieID
+            if !curatedYouTubeEmbed && ((!url.isEmpty && FloatWindow.validateMediaURL(url) == nil
+                && !(url == videoSrc && FloatWindow.isSafeMediaSource(videoSrc)))
+                || (!embedUrl.isEmpty && FloatWindow.validateMediaURL(embedUrl) == nil)) {
+                messageHandler?.sendMessage([
+                    "type": "error",
+                    "error": "Chỉ được mở các trang xem phim trong danh sách cho phép."
+                ])
+                return
+            }
             let title = msg["title"] as? String ?? "VibeFloat"
             let site = msg["site"] as? String ?? "generic"
             let width = msg["width"] as? CGFloat
@@ -577,11 +593,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
 
         floatWindow?.show()
         if focusSession {
-            // Instrumental background: stay click-through and quiet so lyrics
-            // and the window itself don't compete with the editor.
-            floatWindow?.setGhostMode(true)
+            // Background playback never changes the user's click-through choice.
             floatWindow?.duckVolume()
-            floatWindow?.showHUD("Nhạc nền — xuyên chuột, tiếng nhỏ")
+            floatWindow?.showHUD("Nhạc nền — tiếng nhỏ")
         }
     }
 

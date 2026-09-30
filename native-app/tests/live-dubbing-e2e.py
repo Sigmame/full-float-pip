@@ -115,6 +115,9 @@ def run():
             toggled_off_after_ready = False
             toggled_on_after_ready = False
             toggled_off_at = 0.0
+            last_off_status_at = 0.0
+            off_status_response_index = 0
+            resumed_after_off = False
             reused_progress_index = None
             while time.monotonic() < deadline and proc.poll() is None:
                 if not offline_sent and time.monotonic() >= began + 2:
@@ -130,7 +133,21 @@ def run():
                     proc.stdin.flush()
                     toggled_off_after_ready = True
                     toggled_off_at = time.monotonic()
-                if toggled_off_after_ready and not toggled_on_after_ready and time.monotonic() - toggled_off_at >= 0.3:
+                    off_status_response_index = len(responses)
+                if (toggled_off_after_ready and not resumed_after_off and
+                        time.monotonic() - toggled_off_at >= 1.3 and
+                        time.monotonic() - last_off_status_at >= 0.8):
+                    status_payload = json.dumps({"action": "getStatus"}).encode()
+                    proc.stdin.write(struct.pack("<I", len(status_payload)) + status_payload)
+                    proc.stdin.flush()
+                    last_off_status_at = time.monotonic()
+                if last_off_status_at and not resumed_after_off:
+                    resumed_after_off = any(
+                        r.get("isPlaying") is True and
+                        r.get("currentTime", 0) > paused_status[0].get("currentTime", 0) + 0.4
+                        for r in responses[off_status_response_index:]
+                    )
+                if resumed_after_off and not toggled_on_after_ready:
                     on_payload = json.dumps({"action": "toggleAIDub"}).encode()
                     proc.stdin.write(struct.pack("<I", len(on_payload)) + on_payload)
                     proc.stdin.flush()
@@ -163,6 +180,7 @@ def run():
             assert len(scheduled) >= 3, "Offline Dub should speak all adjacent timeline cues"
             paused_status = [r for r in responses if r.get("type") == "status" and "progress" in r]
             assert paused_status and paused_status[0].get("isPlaying") is False, paused_status
+            assert resumed_after_off, "Video must resume after Offline Dub is switched off"
             progress = [line for line in lines if "[OfflineDub] progress" in line]
             assert any("đang dịch và tạo giọng (0%)" in line for line in progress), progress
             assert any("100%" in line and "audio 3/3 câu" in line for line in progress), progress

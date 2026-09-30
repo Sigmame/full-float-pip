@@ -20,7 +20,7 @@ enum VibePlacer {
     static let margin: CGFloat = 14
     static let keepOut: CGFloat = 18
     static let stripGap: CGFloat = 6
-    static let stripHeight: CGFloat = 72
+    static let stripHeight: CGFloat = FloatingPlayerLayout.height
 
     struct Decision {
         let frame: NSRect
@@ -265,7 +265,7 @@ final class VibeDock {
 
     private func tick() {
         guard let window = window, window.isWindowVisible else { return }
-        if window.isPinned || window.autoDockPaused || window.isResizeActive { return }
+        if window.isPinned || window.autoDockPaused || window.isResizeActive || window.isUserExpanded { return }
         let obstacles = scanWeightedObstacles()
         if shouldHold(against: obstacles) { return }
         applyPlacement(to: window, animated: true, force: false, scannedObstacles: obstacles)
@@ -273,7 +273,7 @@ final class VibeDock {
 
     private func applyPlacement(to window: FloatWindow, animated: Bool, force: Bool,
                                 scannedObstacles: [WeightedObstacle]? = nil) {
-        guard !window.isPinned else { return }
+        guard !window.isPinned, !window.isUserExpanded else { return }
         guard let screen = window.screen ?? NSScreen.main else { return }
         let visible = screen.visibleFrame
         let obstacles = (scannedObstacles ?? scanWeightedObstacles()).filter {
