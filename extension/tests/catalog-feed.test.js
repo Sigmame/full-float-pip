@@ -126,7 +126,13 @@ const movieService = {
   getLatest: async (source, category, page) => pages[page] || [],
   getFavoriteSlugSet: async () => new Set(),
   toggleFavorite: async () => true,
-  addRecentSearch() {}
+  addRecentSearch() {},
+  // In-memory stand-in for the real first-page cache.
+  cacheStore: {},
+  saves: 0,
+  feedSignature: items => (items || []).map(m => `${m.source || ''}:${m.slug}`).join(','),
+  getCachedFeed: async key => movieService.cacheStore[key] || null,
+  saveFeedPage: async (key, items) => { movieService.saves++; movieService.cacheStore[key] = { items, at: Date.now() }; }
 };
 sandbox.MovieService = movieService;
 
@@ -260,6 +266,7 @@ async function run() {
   feedApi.setFilter('all');
   feedApi.setKeyword('');
   feedApi.setCategory('bo');
+  movieService.cacheStore = {}; // a list that was never cached
   pages[1] = [item(50), item(51)];
   const grid = elements['movie-grid'];
   await feedApi.loadFeedView();
@@ -271,6 +278,7 @@ async function run() {
   });
 
   // 9. A list with no cards at all says so instead of leaving the covers up.
+  movieService.cacheStore = {}; // these scenarios are about a list that was never cached
   pages[1] = [];
   await feedApi.loadFeedView();
   check('an empty list swaps its covers for a message', () => {
@@ -279,6 +287,7 @@ async function run() {
   });
 
   // 10. The filter is named, because that is what usually emptied the list.
+  movieService.cacheStore = {}; // these scenarios are about a list that was never cached
   feedApi.setFilter('thuyetminh');
   pages[1] = [{ ...item(60), hasThuyetMinh: false }];
   pages[2] = [{ ...item(61), hasThuyetMinh: false }];
@@ -288,6 +297,7 @@ async function run() {
   });
 
   // 11. A healthy load leaves nothing transient behind, and says nothing.
+  movieService.cacheStore = {}; // these scenarios are about a list that was never cached
   feedApi.setFilter('all');
   feedApi.setKeyword('');
   feedApi.setCategory('bo');
@@ -348,6 +358,81 @@ async function run() {
   });
   window.CATALOG_AUDIT_DEBUG = false;
   grid.placeholders = [];
+
+  // 16. First-page cache: a cached list appears at once, page 1 is refreshed behind it.
+  const tick = () => new Promise(r => setTimeout(r, 30));
+  const listKey = () => feedApi.feedKeyFor();
+  feedApi.setFilter('all'); feedApi.setKeyword(''); feedApi.setCategory('le'); feedApi.setSource('all');
+  window.scrollY = 0;
+  movieService.cacheStore = {}; movieService.saves = 0;
+  pages[1] = [item(100), item(101), item(102)]; pages[2] = [];
+  await feedApi.loadFeedView();
+  check('a normal first load stores page 1', () => {
+    assert.strictEqual(movieService.saves, 1);
+    assert.strictEqual(movieService.cacheStore[listKey()].items.length, 3);
+  });
+
+  pages[1] = [item(100), item(101), item(102)];
+  movieService.saves = 0;
+  let cachedFeed;
+  await feedApi.loadFeedView();
+  cachedFeed = feedApi.current();
+  check('a cached list shows page 1 before any network answer', () => {
+    assert.strictEqual(cachedFeed.count, 3);
+    assert.strictEqual(cachedFeed.page, 1, 'the scroll feed continues from page 2');
+    assert.strictEqual(elements['result-count'].textContent, '3 phim');
+  });
+  await tick();
+  check('an unchanged refresh leaves the page alone but keeps the cache fresh', () => {
+    assert.strictEqual(cachedFeed.count, 3);
+    assert.ok(movieService.saves >= 1);
+  });
+
+  // changed titles and the reader is at the top: the page is redrawn from the fresh page
+  pages[1] = [item(200), item(201), item(202), item(203)];
+  window.scrollY = 0;
+  await feedApi.loadFeedView();
+  cachedFeed = feedApi.current();
+  await tick();
+  check('a changed first page replaces the cached one while the reader is at the top', () => {
+    assert.strictEqual(cachedFeed.count, 4, `count ${cachedFeed.count}`);
+    assert.ok(cachedFeed.seen.has('kkphim:phim-203'));
+    assert.ok(!cachedFeed.seen.has('kkphim:phim-100'), 'old cards are gone');
+  });
+
+  // a scrolled reader is not moved; the new page is cached for next time
+  movieService.cacheStore[listKey()] = { items: [item(100), item(101), item(102), item(103)], at: Date.now() };
+  pages[1] = [item(300), item(301), item(302), item(303)];
+  window.scrollY = 900;
+  await feedApi.loadFeedView();
+  cachedFeed = feedApi.current();
+  await tick();
+  check('a scrolled reader keeps the cached page; the fresh one is stored', () => {
+    assert.ok(cachedFeed.seen.has('kkphim:phim-100') && !cachedFeed.seen.has('kkphim:phim-300'));
+    assert.strictEqual(movieService.cacheStore[listKey()].items[0].slug, 'phim-300');
+  });
+  window.scrollY = 0;
+
+  // a partial outage answers with a sliver of a page: nothing is redrawn or overwritten
+  movieService.cacheStore[listKey()] = { items: [1, 2, 3, 4, 5, 6].map(item), at: Date.now() };
+  pages[1] = [item(400)];
+  await feedApi.loadFeedView();
+  cachedFeed = feedApi.current();
+  await tick();
+  check('a sliver of a page does not replace a fuller cached list', () => {
+    assert.strictEqual(cachedFeed.count, 6);
+    assert.strictEqual(movieService.cacheStore[listKey()].items.length, 6);
+  });
+
+  // search and favourites are never cached
+  feedApi.setKeyword('phù sa');
+  movieService.cacheStore = {}; movieService.saves = 0;
+  await feedApi.loadFeedView();
+  check('search results are not cached', () => {
+    assert.strictEqual(movieService.saves, 0);
+  });
+  feedApi.setKeyword('');
+  pages[1] = [];
 
   console.log(results.join('\n'));
   console.log(process.exitCode ? 'catalogue feed: checks failed' : 'catalogue feed scenarios passed');

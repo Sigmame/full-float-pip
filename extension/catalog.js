@@ -18,7 +18,6 @@ let isHeroHovered = false;
 let homeRailResizeObserver = null;
 let favSlugSet = new Set();
 let suggestActiveIdx = -1;
-let suggestItemsCache = [];
 let activeDialog = null;
 let dialogReturnFocus = null;
 
@@ -50,7 +49,6 @@ function setOptionalText(id, value) {
     element.hidden = !value;
 }
 
-const FALLBACK_POSTER = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='360' viewBox='0 0 240 360'><rect width='240' height='360' fill='%2316161f'/><circle cx='120' cy='160' r='32' fill='%23222230'/><polygon points='114,146 134,160 114,174' fill='%23ffffff'/><text x='50%25' y='216' dominant-baseline='middle' text-anchor='middle' fill='%23888899' font-family='sans-serif' font-weight='600' font-size='13'>VibeFloat</text></svg>";
 
 const PLAY_ICON_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>`;
 const LIST_ICON_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
@@ -86,6 +84,7 @@ function setListButtonState(btn, inList) {
 
 // MARK: - Navigation View Router
 function navigateView() {
+    homeLoadSeq++;
     const homeView = document.getElementById('home-view');
     const gridView = document.getElementById('grid-view');
     const heroSpotlight = document.getElementById('hero-spotlight');
@@ -242,7 +241,7 @@ function initUI() {
     // Ghost Mode Toggle — sync real native state
     const ghostBtn = document.getElementById('btn-toggle-ghost');
     const ghostStatus = document.getElementById('ghost-status-text');
-    let isGhost = true;
+    let isGhost = false;
 
     const syncGhostUI = (on) => {
         isGhost = !!on;
@@ -251,40 +250,13 @@ function initUI() {
         ghostBtn?.setAttribute('aria-pressed', isGhost ? 'true' : 'false');
     };
 
-    const nativeStatusEl = document.getElementById('native-status');
-    const updateNativeStatusUI = (connected) => {
-        if (!nativeStatusEl) return;
-        nativeStatusEl.classList.remove('status-unknown', 'status-ready', 'status-disconnected');
-        nativeStatusEl.disabled = connected;
-        const text = nativeStatusEl.querySelector('.status-text');
-        if (connected) {
-            nativeStatusEl.classList.add('status-ready');
-            if (text) text.textContent = 'Native: Sẵn sàng';
-            nativeStatusEl.title = 'Native Companion App đã kết nối và sẵn sàng phát nổi.';
-        } else {
-            nativeStatusEl.classList.add('status-disconnected');
-            if (text) text.textContent = 'Chưa kết nối App';
-            nativeStatusEl.title = 'Chưa kết nối macOS App. Mở Terminal và chạy ./scripts/install.sh';
-        }
-    };
-
-    chrome.runtime.sendMessage({ type: 'GET_NATIVE_STATUS' }).then((res) => {
-        if (typeof res?.isGhost === 'boolean') syncGhostUI(res.isGhost);
-        updateNativeStatusUI(Boolean(res && res.success));
-    }).catch(() => {
-        updateNativeStatusUI(false);
-    });
-
-    nativeStatusEl?.addEventListener('click', () => {
-        if (nativeStatusEl.classList.contains('status-disconnected')) {
-            showToast('Chưa kết nối Native App: Mở Terminal tại full-float-pip và chạy ./scripts/install.sh');
-        }
-    });
+    NativeStatus.init({
+        onResult: (res) => { if (typeof res.isGhost === 'boolean') syncGhostUI(res.isGhost); }
+    })?.check();
 
     chrome.runtime.onMessage.addListener((msg) => {
         if (msg?.type === 'NATIVE_STATUS_BROADCAST') {
             if (typeof msg.isGhost === 'boolean') syncGhostUI(msg.isGhost);
-            if (typeof msg.connected === 'boolean') updateNativeStatusUI(msg.connected);
         }
     });
 
@@ -368,7 +340,7 @@ function initUI() {
             const url = directUrlInput?.value?.trim();
             const title = directTitleInput?.value?.trim() || 'Video từ link';
             if (!url) {
-                setDirectError('Nhập link video hoặc luồng phát để tiếp tục.');
+                setDirectError('Nhập link phim từ nguồn được hỗ trợ để tiếp tục.');
                 directUrlInput?.focus();
                 return;
             }
@@ -376,7 +348,7 @@ function initUI() {
                 const parsed = new URL(url);
                 if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('protocol');
             } catch {
-                setDirectError('Dùng link bắt đầu bằng https:// hoặc http://.');
+                setDirectError('Dùng link HTTPS từ nguồn phim được hỗ trợ.');
                 directUrlInput?.focus();
                 return;
             }
@@ -502,8 +474,12 @@ function initUI() {
     // Audio Sub-pills
     document.querySelectorAll('.audio-pill').forEach(pill => {
         pill.addEventListener('click', (e) => {
-            document.querySelectorAll('.audio-pill').forEach(p => p.classList.remove('active'));
+            document.querySelectorAll('.audio-pill').forEach(p => {
+                p.classList.remove('active');
+                p.setAttribute('aria-pressed', 'false');
+            });
             e.currentTarget.classList.add('active');
+            e.currentTarget.setAttribute('aria-pressed', 'true');
             currentAudioFilter = e.currentTarget.dataset.filter || 'all';
 
             if (currentCategory === 'favorites') {
@@ -519,25 +495,13 @@ function initUI() {
     // View Mode Switcher (Poster vs Cinema 16:9)
     const viewGridBtn = document.getElementById('view-grid-btn');
     const viewCinemaBtn = document.getElementById('view-cinema-btn');
-    const movieGrid = document.getElementById('movie-grid');
 
-    viewGridBtn?.addEventListener('click', () => {
-        viewGridBtn.classList.add('active');
-        viewCinemaBtn?.classList.remove('active');
-        currentViewMode = 'view-poster';
-        movieGrid?.classList.remove('view-cinema');
-        movieGrid?.classList.add('view-poster');
-        navigateView();
-    });
-
-    viewCinemaBtn?.addEventListener('click', () => {
-        viewCinemaBtn.classList.add('active');
-        viewGridBtn?.classList.remove('active');
-        currentViewMode = 'view-cinema';
-        movieGrid?.classList.remove('view-poster');
-        movieGrid?.classList.add('view-cinema');
-        navigateView();
-    });
+    viewGridBtn?.addEventListener('click', () => applyViewMode('view-poster'));
+    viewCinemaBtn?.addEventListener('click', () => applyViewMode('view-cinema'));
+    try {
+        const saved = localStorage.getItem(VIEW_MODE_STORAGE_KEY);
+        if (saved === 'view-cinema' || saved === 'view-poster') applyViewMode(saved, { persist: false });
+    } catch {}
 
     // Feed controls: scrolling loads more; the button is the retry path when a
     // page failed or the reader wants to jump past a slow one.
@@ -550,7 +514,18 @@ function initUI() {
     // solid once it is not, the way the reference catalogue behaves.
     const navbar = document.querySelector('.navbar');
     if (navbar) {
-        const syncNavbar = () => navbar.classList.toggle('navbar-scrolled', window.scrollY > 12);
+        let lastScrollY = window.scrollY;
+        const syncNavbar = () => {
+            const y = window.scrollY;
+            navbar.classList.toggle('navbar-scrolled', y > 12);
+            // On phones the two-row header hides while reading and returns on scroll up.
+            const menuOpen = document.getElementById('mobile-menu-btn')?.getAttribute('aria-expanded') === 'true';
+            const searching = navbar.contains(document.activeElement) && document.activeElement?.tagName === 'INPUT';
+            if (window.innerWidth > 900 || menuOpen || searching || y < 160) navbar.classList.remove('navbar-hidden');
+            else if (y - lastScrollY > 8) navbar.classList.add('navbar-hidden');
+            else if (lastScrollY - y > 8) navbar.classList.remove('navbar-hidden');
+            lastScrollY = y;
+        };
         window.addEventListener('scroll', syncNavbar, { passive: true });
         syncNavbar();
     }
@@ -676,7 +651,6 @@ async function showRecentSearchesDropdown() {
         return;
     }
     suggestActiveIdx = -1;
-    suggestItemsCache = [];
     dropdown.innerHTML = `
         <div class="recent-searches-header">
             <span>Tìm gần đây</span>
@@ -712,7 +686,6 @@ function renderSearchSuggestions(items, query) {
     const dropdown = document.getElementById('search-suggestions');
     if (!dropdown) return;
     suggestActiveIdx = -1;
-    suggestItemsCache = items || [];
 
     if (!items || items.length === 0) {
         dropdown.innerHTML = `<div class="suggestion-empty">Không tìm thấy phim khớp với "${escapeHtml(query)}"</div>`;
@@ -760,132 +733,188 @@ function renderHomeUnavailable(container, message) {
     container.querySelector('.state-retry-btn')?.addEventListener('click', loadHomePage);
 }
 
-async function loadHomePage() {
-    const container = document.getElementById('home-sections-container');
-    if (!container) return;
-    document.getElementById('hero-spotlight')?.classList.add('hidden');
+// Draws the category rails. Returns false when there is nothing to show.
+function renderHomeSections(container, homeData) {
+    if (!homeData.sections?.length) {
+        renderHomeUnavailable(container, 'Chưa có phim để hiển thị. Hãy thử nguồn khác hoặc tải lại.');
+        return false;
+    }
 
-    // Show skeletons
-    container.innerHTML = `
+    // Render each category rail
+    container.innerHTML = homeData.sections.map((sec, secIdx) => {
+        const railClass = sec.isTop10 ? 'home-section-rail top10-rail' : 'home-section-rail';
+        return `
+            <section class="home-section" data-sec-id="${escapeAttr(sec.id)}">
+                <div class="home-section-header">
+                    <div class="home-section-title-wrap">
+                        <div>
+                            <h3 class="home-section-title">${escapeHtml(sec.title)}</h3>
+                            <span class="home-section-subtitle">${escapeHtml(sec.subtitle || '')}</span>
+                        </div>
+                    </div>
+                    <button class="view-all-btn" data-cat="${escapeAttr(sec.categoryKey)}" data-genre="${escapeAttr(sec.genreSlug || '')}">Xem tất cả →</button>
+                </div>
+
+                <div class="home-section-rail-wrap">
+                    <button class="rail-nav-btn rail-prev" data-target="rail-${secIdx}" type="button" aria-label="Cuộn trái mục ${escapeAttr(sec.title)}">‹</button>
+                    <div id="rail-${secIdx}" class="${railClass}" role="region" aria-label="${escapeAttr(sec.title)}" tabindex="0">
+                        ${renderMovieCardsHtml(sec.items, { isTop10: !!sec.isTop10, isRail: true })}
+                    </div>
+                    <button class="rail-nav-btn rail-next" data-target="rail-${secIdx}" type="button" aria-label="Cuộn phải mục ${escapeAttr(sec.title)}">›</button>
+                </div>
+            </section>
+        `;
+    }).join('');
+
+    // Keep rail controls in sync with the visible position.
+    const syncRailControls = (rail) => {
+        const wrap = rail.closest('.home-section-rail-wrap');
+        const maxScroll = rail.scrollWidth - rail.clientWidth;
+        wrap.querySelector('.rail-prev').disabled = rail.scrollLeft < 8;
+        wrap.querySelector('.rail-next').disabled = maxScroll < 8 || rail.scrollLeft >= maxScroll - 8;
+    };
+    homeRailResizeObserver?.disconnect();
+    homeRailResizeObserver = new ResizeObserver(entries => {
+        entries.forEach(({ target }) => syncRailControls(target));
+    });
+    container.querySelectorAll('.home-section-rail').forEach(rail => {
+        rail.addEventListener('scroll', () => syncRailControls(rail), { passive: true });
+        homeRailResizeObserver.observe(rail);
+        syncRailControls(rail);
+    });
+
+    // Bind Rail scroll buttons
+    container.querySelectorAll('.rail-nav-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const targetId = btn.dataset.target;
+            const rail = document.getElementById(targetId);
+            if (rail) {
+                const scrollAmount = rail.clientWidth * 0.75;
+                const direction = btn.classList.contains('rail-prev') ? -scrollAmount : scrollAmount;
+                rail.scrollBy({ left: direction, behavior: 'smooth' });
+            }
+        });
+    });
+
+    // Bind "Xem tất cả" buttons
+    container.querySelectorAll('.view-all-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            const targetCat = btn.dataset.cat;
+            const genreSlug = btn.dataset.genre;
+            if (genreSlug) {
+                const gSelect = document.getElementById('genre-select');
+                if (gSelect) gSelect.value = genreSlug;
+                currentGenre = genreSlug;
+                currentCategory = 'moi';
+                document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
+                navigateView();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+                return;
+            }
+            if (targetCat) {
+                document.querySelectorAll('.cat-btn').forEach(b => {
+                    b.classList.toggle('active', b.dataset.cat === targetCat);
+                });
+                currentCategory = targetCat;
+                currentGenre = '';
+                navigateView();
+                window.scrollTo({ top: 0, behavior: 'smooth' });
+            }
+        });
+    });
+
+    // Bind Card Clicks
+    bindCardClicks(container);
+    return true;
+}
+
+let homeLoadSeq = 0;
+const HOME_SKELETON_HTML = `
         <p class="home-loading" role="status">Đang tải kho phim…</p>
         <div class="home-section-skeleton"></div>
         <div class="home-section-skeleton"></div>
         <div class="home-section-skeleton"></div>
     `;
 
+function applyHomeHero(homeData) {
+    const spots = (homeData.spotlights && homeData.spotlights.length)
+        ? homeData.spotlights
+        : (homeData.spotlight ? [homeData.spotlight] : []);
+    if (spots.length) {
+        startHeroRotation(spots);
+    } else {
+        stopHeroRotation();
+        document.getElementById('hero-spotlight')?.classList.add('hidden');
+    }
+    return spots;
+}
+
+async function loadHomePage() {
+    const seq = ++homeLoadSeq;
+    const container = document.getElementById('home-sections-container');
+    if (!container) return;
+    const source = currentSource;
+
+    // Last good result: shown at once, then refreshed in the background.
+    let cached = null;
+    try { cached = await MovieService.getCachedHome(source); } catch {}
+    if (seq !== homeLoadSeq) return;
+
+    let shownSignature = null;
+    if (cached) {
+        await refreshFavSet();
+        if (seq !== homeLoadSeq) return;
+        applyHomeHero(cached);
+        if (renderHomeSections(container, cached)) shownSignature = MovieService.homeSignature(cached);
+        else cached = null;
+    }
+    if (!cached) {
+        document.getElementById('hero-spotlight')?.classList.add('hidden');
+        container.innerHTML = HOME_SKELETON_HTML;
+    }
+
     try {
         await refreshFavSet();
-        const homeData = await MovieService.getHomeSections(currentSource);
+        if (seq !== homeLoadSeq) return;
+        let earlyHeroSlug = null;
+        const homeData = await MovieService.getHomeSections(source, {
+            // Without a cache, show the billboard as soon as it is ready instead of waiting for every row.
+            onSpotlights: early => {
+                if (cached || seq !== homeLoadSeq || !early.length) return;
+                startHeroRotation(early);
+                earlyHeroSlug = early[0].slug;
+            }
+        });
+        if (seq !== homeLoadSeq) return;
 
-        // Billboard rotation (2–3 spotlights)
-        const spots = (homeData.spotlights && homeData.spotlights.length)
-            ? homeData.spotlights
-            : (homeData.spotlight ? [homeData.spotlight] : []);
-        if (spots.length) {
-            startHeroRotation(spots);
+        if (cached) {
+            // Same titles as the cached page: leave it alone. The reader may be mid-scroll on a
+            // changed page: keep what they see; the new data is cached for the next visit.
+            // A partial outage returns fewer rows without failing: keep the fuller cached page.
+            if (MovieService.homeRowCount(homeData) < MovieService.homeRowCount(cached)) return;
+            if (MovieService.homeSignature(homeData) === shownSignature || window.scrollY > 300) return;
+            applyHomeHero(homeData);
         } else {
-            stopHeroRotation();
-            document.getElementById('hero-spotlight')?.classList.add('hidden');
+            applyHomeHeroUnlessEarly(homeData, earlyHeroSlug);
         }
-
-        if (!homeData.sections?.length) {
-            renderHomeUnavailable(container, 'Chưa có phim để hiển thị. Hãy thử nguồn khác hoặc tải lại.');
-            return;
-        }
-
-        // Render each category rail
-        container.innerHTML = homeData.sections.map((sec, secIdx) => {
-            const railClass = sec.isTop10 ? 'home-section-rail top10-rail' : 'home-section-rail';
-            return `
-                <section class="home-section" data-sec-id="${escapeAttr(sec.id)}">
-                    <div class="home-section-header">
-                        <div class="home-section-title-wrap">
-                            <div>
-                                <h3 class="home-section-title">${escapeHtml(sec.title)}</h3>
-                                <span class="home-section-subtitle">${escapeHtml(sec.subtitle || '')}</span>
-                            </div>
-                        </div>
-                        <button class="view-all-btn" data-cat="${escapeAttr(sec.categoryKey)}" data-genre="${escapeAttr(sec.genreSlug || '')}">Xem tất cả →</button>
-                    </div>
-
-                    <div class="home-section-rail-wrap">
-                        <button class="rail-nav-btn rail-prev" data-target="rail-${secIdx}" type="button" aria-label="Cuộn trái mục ${escapeAttr(sec.title)}">‹</button>
-                        <div id="rail-${secIdx}" class="${railClass}" role="region" aria-label="${escapeAttr(sec.title)}" tabindex="0">
-                            ${renderMovieCardsHtml(sec.items, { isTop10: !!sec.isTop10, isRail: true })}
-                        </div>
-                        <button class="rail-nav-btn rail-next" data-target="rail-${secIdx}" type="button" aria-label="Cuộn phải mục ${escapeAttr(sec.title)}">›</button>
-                    </div>
-                </section>
-            `;
-        }).join('');
-
-        // Keep rail controls in sync with the visible position.
-        const syncRailControls = (rail) => {
-            const wrap = rail.closest('.home-section-rail-wrap');
-            const maxScroll = rail.scrollWidth - rail.clientWidth;
-            wrap.querySelector('.rail-prev').disabled = rail.scrollLeft < 8;
-            wrap.querySelector('.rail-next').disabled = maxScroll < 8 || rail.scrollLeft >= maxScroll - 8;
-        };
-        homeRailResizeObserver?.disconnect();
-        homeRailResizeObserver = new ResizeObserver(entries => {
-            entries.forEach(({ target }) => syncRailControls(target));
-        });
-        container.querySelectorAll('.home-section-rail').forEach(rail => {
-            rail.addEventListener('scroll', () => syncRailControls(rail), { passive: true });
-            homeRailResizeObserver.observe(rail);
-            syncRailControls(rail);
-        });
-
-        // Bind Rail scroll buttons
-        container.querySelectorAll('.rail-nav-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.stopPropagation();
-                const targetId = btn.dataset.target;
-                const rail = document.getElementById(targetId);
-                if (rail) {
-                    const scrollAmount = rail.clientWidth * 0.75;
-                    const direction = btn.classList.contains('rail-prev') ? -scrollAmount : scrollAmount;
-                    rail.scrollBy({ left: direction, behavior: 'smooth' });
-                }
-            });
-        });
-
-        // Bind "Xem tất cả" buttons
-        container.querySelectorAll('.view-all-btn').forEach(btn => {
-            btn.addEventListener('click', () => {
-                const targetCat = btn.dataset.cat;
-                const genreSlug = btn.dataset.genre;
-                if (genreSlug) {
-                    const gSelect = document.getElementById('genre-select');
-                    if (gSelect) gSelect.value = genreSlug;
-                    currentGenre = genreSlug;
-                    currentCategory = 'moi';
-                    document.querySelectorAll('.cat-btn').forEach(b => b.classList.remove('active'));
-                    navigateView();
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                    return;
-                }
-                if (targetCat) {
-                    document.querySelectorAll('.cat-btn').forEach(b => {
-                        b.classList.toggle('active', b.dataset.cat === targetCat);
-                    });
-                    currentCategory = targetCat;
-                    currentGenre = '';
-                    navigateView();
-                    window.scrollTo({ top: 0, behavior: 'smooth' });
-                }
-            });
-        });
-
-        // Bind Card Clicks
-        bindCardClicks(container);
-
+        renderHomeSections(container, homeData);
     } catch (e) {
+        if (cached) return; // The cached page is still useful when the refresh fails.
         console.error('Failed to load home sections:', e);
         renderHomeUnavailable(container, 'Không tải được kho phim. Kiểm tra kết nối rồi thử lại.');
     }
     // The home sections just loaded; check they took their skeletons away.
     auditTransientNodes(container, 'loading the home sections', true);
+}
+
+function applyHomeHeroUnlessEarly(homeData, earlyHeroSlug) {
+    const spots = (homeData.spotlights && homeData.spotlights.length)
+        ? homeData.spotlights
+        : (homeData.spotlight ? [homeData.spotlight] : []);
+    if (!spots.length) return applyHomeHero(homeData);
+    if (!earlyHeroSlug || earlyHeroSlug !== spots[0].slug) startHeroRotation(spots);
+    return spots;
 }
 
 // MARK: - Render Movie Cards HTML
@@ -1476,6 +1505,41 @@ async function floatContinueItem(item) {
 // response for a view the user has already left is recognised (the object
 // identity changed) and dropped instead of appended to the wrong list.
 const FEED_PAGE_CAP = 60;
+const VIEW_MODE_STORAGE_KEY = 'vibe_catalog_view_mode';
+
+// Poster and Cinema differ only in layout and artwork, so switching keeps the loaded list and scroll position.
+function applyViewMode(mode, { persist = true } = {}) {
+    const movieGrid = document.getElementById('movie-grid');
+    const isCinema = mode === 'view-cinema';
+    // Row heights differ between layouts; keep the first visible card where it was on screen.
+    let anchor = null;
+    if (persist && movieGrid && typeof window !== 'undefined') {
+        const visible = [...movieGrid.querySelectorAll('.movie-card')].find(c =>
+            typeof c.getBoundingClientRect === 'function' && c.getBoundingClientRect().bottom > 120);
+        if (visible) anchor = { card: visible, top: visible.getBoundingClientRect().top };
+    }
+    currentViewMode = isCinema ? 'view-cinema' : 'view-poster';
+    movieGrid?.classList.toggle('view-cinema', isCinema);
+    movieGrid?.classList.toggle('view-poster', !isCinema);
+    [['view-grid-btn', !isCinema], ['view-cinema-btn', isCinema]].forEach(([id, on]) => {
+        const btn = document.getElementById(id);
+        btn?.classList.toggle('active', on);
+        btn?.setAttribute('aria-pressed', on ? 'true' : 'false');
+    });
+    if (persist) { try { localStorage.setItem(VIEW_MODE_STORAGE_KEY, currentViewMode); } catch {} }
+    if (!movieGrid || !feed?.items) return;
+    const kind = isCinema ? 'wide' : 'poster';
+    movieGrid.querySelectorAll('.movie-card').forEach(card => {
+        const item = feed.items.get(`${card.dataset.source}:${card.dataset.slug}`);
+        const img = card.querySelector('img.movie-poster');
+        if (item && img) MovieImages.apply(img, item, kind);
+    });
+    if (anchor) {
+        const shift = anchor.card.getBoundingClientRect().top - anchor.top;
+        if (shift) window.scrollBy(0, shift);
+    }
+}
+
 let feed = null;
 let feedObserver = null;
 let feedScrollBound = false;
@@ -1521,6 +1585,7 @@ function newFeed() {
         done: false,
         emptyStreak: 0,
         seen: new Set(),
+        items: new Map(),
         count: 0
     };
     return feed;
@@ -1725,6 +1790,7 @@ function appendToGrid(grid, items, target) {
         const key = `${item.source || currentSource}:${item.slug}`;
         if (target.seen.has(key)) return;
         target.seen.add(key);
+        target.items?.set(key, item);
         fresh.push(item);
     });
     if (!fresh.length) return 0;
@@ -1778,6 +1844,10 @@ async function loadMoreMovies() {
         const items = await fetchFeedPage(target);
         if (feed !== target) return; // the view changed while this was in flight
         const added = appendToGrid(document.getElementById('movie-grid'), items, target);
+        if (target.page === 0 && target.mode === 'list' && items.length) {
+            target.cachedSignature = MovieService.feedSignature?.(items);
+            MovieService.saveFeedPage?.(target.key, items);
+        }
         target.page += 1;
         target.emptyStreak = (items.length && !added) ? target.emptyStreak + 1 : 0;
         const countEl = document.getElementById('result-count');
@@ -1837,7 +1907,51 @@ async function loadFeedView() {
     } catch (err) {
         console.warn('[catalog] favourites unavailable:', err);
     }
+    const target = feed;
+    let cached = null;
+    if (target.mode === 'list') {
+        try { cached = await MovieService.getCachedFeed?.(target.key); } catch {}
+    }
+    if (cached && feed === target) {
+        // Last good first page, shown at once; the scroll feed continues from page 2.
+        appendToGrid(document.getElementById('movie-grid'), cached.items, target);
+        target.page = 1;
+        target.cachedCount = cached.items.length;
+        target.cachedSignature = MovieService.feedSignature(cached.items);
+        const countEl = document.getElementById('result-count');
+        if (countEl) countEl.textContent = target.count ? `${target.count} phim` : '';
+        setFeedFooter('idle');
+        refreshFeedFirstPage(target);
+        return;
+    }
     await loadMoreMovies();
+}
+
+/** Re-fetch page 1 behind a cached view; redraw only when that is safe and something changed. */
+async function refreshFeedFirstPage(target) {
+    try {
+        const items = await fetchFeedPage({ mode: target.mode, page: 0 });
+        if (feed !== target || !items.length) return;
+        // A fraction of a page is an outage, not news: keep what is on screen.
+        if (items.length * 2 < target.cachedCount) return;
+        MovieService.saveFeedPage?.(target.key, items);
+        if (MovieService.feedSignature(items) === target.cachedSignature) return;
+        // The reader already scrolled or loaded more: redrawing would move the page under them.
+        if (target.page !== 1 || target.loading || window.scrollY > 300) return;
+        const grid = document.getElementById('movie-grid');
+        if (!grid) return;
+        grid.innerHTML = '';
+        target.seen.clear();
+        target.items?.clear();
+        target.count = 0;
+        appendToGrid(grid, items, target);
+        target.cachedSignature = MovieService.feedSignature(items);
+        target.cachedCount = items.length;
+        const countEl = document.getElementById('result-count');
+        if (countEl) countEl.textContent = target.count ? `${target.count} phim` : '';
+    } catch (err) {
+        console.warn('[catalog] background refresh failed:', err);
+    }
 }
 
 // MARK: - Load Category Movies (Grid View)

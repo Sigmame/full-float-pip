@@ -10,6 +10,7 @@
   <link rel="stylesheet" href="catalog.css">
 </head>
 <body>
+  <a class="skip-link" href="#main-content">Bỏ qua tới nội dung</a>
   <div class="app-container">
     <!-- Navbar -->
     <header class="navbar">
@@ -29,7 +30,7 @@
             <circle cx="11" cy="11" r="8"></circle>
             <line x1="21" y1="21" x2="16.65" y2="16.65"></line>
           </svg>
-          <input type="search" id="search-input" aria-label="Tìm phim" placeholder="Tìm tên phim, anime hoặc diễn viên…" autocomplete="off">
+          <input type="search" id="search-input" aria-label="Tìm phim" placeholder="Tìm phim, diễn viên…" autocomplete="off">
           <kbd class="search-kbd" title="Nhấn phím / để tìm nhanh">/</kbd>
           <button id="search-clear" class="clear-btn hidden" title="Xóa tìm kiếm" type="button" aria-label="Xóa tìm kiếm">&times;</button>
 
@@ -40,7 +41,7 @@
 
       <button id="mobile-menu-btn" class="mobile-menu-btn" type="button" aria-expanded="false" aria-controls="mobile-menu-panel mobile-categories">Menu</button>
       <div class="nav-right" id="mobile-menu-panel">
-        <button id="native-status" class="native-status status-unknown" title="Trạng thái kết nối Native Companion App" type="button" disabled>
+        <button id="native-status" class="native-status status-unknown" title="Trạng thái kết nối Native Companion App" type="button" aria-controls="native-help" aria-expanded="false" disabled>
           <span class="status-dot"></span>
           <span class="status-text">Đang kiểm tra App…</span>
         </button>
@@ -53,28 +54,42 @@
           </svg>
           <span>Lồng tiếng AI: <strong id="aidub-status-text">Tắt</strong></span>
         </button>
-        <button id="btn-shortcuts" class="ghost-nav-btn" title="Xem danh sách phím tắt (?)" type="button">
+        <button id="btn-shortcuts" class="ghost-nav-btn" title="Xem danh sách phím tắt (?)" aria-label="Phím tắt" type="button">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <rect x="2" y="4" width="20" height="16" rx="2" ry="2"/>
             <path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M6 12h.001M10 12h.001M14 12h.001M18 12h.001M8 16h8"/>
           </svg>
-          <span>Phím tắt</span>
+          <span class="btn-label-optional">Phím tắt</span>
         </button>
-        <button id="btn-toggle-ghost" class="ghost-nav-btn active" title="Phím tắt: ⌘⇧G. Bấm xuyên qua phim để gõ code bên dưới." type="button" aria-pressed="true">
-          Xuyên chuột: <span id="ghost-status-text">Bật</span>
+        <button id="btn-toggle-ghost" class="ghost-nav-btn" title="Phím tắt: ⌘⇧G. Bấm xuyên qua phim để gõ code bên dưới." type="button" aria-pressed="false">
+          Xuyên chuột: <span id="ghost-status-text">Tắt</span>
         </button>
         <div class="source-selector">
           <label for="source-select">Nguồn:</label>
           <select id="source-select">
-            <option value="kkphim">KKPhim (HLS FHD)</option>
-            <option value="nguonc">NguonC (Cập nhật liên tục)</option>
-            <option value="thuyetminh">Kho Thuyết Minh (2.300+ phim)</option>
-            <option value="longtieng">Kho Lồng Tiếng (1.300+ phim)</option>
-            <option value="all" selected>Tổng Hợp Đa Nguồn (Khuyên Dùng)</option>
+            <option value="kkphim">KKPhim (FHD)</option>
+            <option value="nguonc">NguonC (Cập nhật nhanh)</option>
+            <option value="thuyetminh">Thuyết minh (2.300+)</option>
+            <option value="longtieng">Lồng tiếng (1.300+)</option>
+            <option value="all" selected>Đa nguồn</option>
           </select>
         </div>
       </div>
     </header>
+
+    <div id="native-help" class="native-help" role="region" aria-labelledby="native-help-title" hidden>
+      <p id="native-help-title" class="native-help-title">Chưa kết nối App macOS</p>
+      <ol class="native-help-steps">
+        <li>Mở Terminal tại thư mục <code>full-float-pip</code>.</li>
+        <li>Chạy lệnh bên dưới, rồi tải lại tiện ích tại <code>chrome://extensions</code>.</li>
+      </ol>
+      <code class="native-help-cmd">./scripts/install.sh</code>
+      <div class="native-help-actions">
+        <button type="button" id="native-help-copy" class="native-help-btn">Sao chép lệnh</button>
+        <button type="button" id="native-help-retry" class="native-help-btn native-help-btn-primary">Kiểm tra lại</button>
+      </div>
+      <p id="native-help-msg" class="native-help-msg" role="status"></p>
+    </div>
 
     <!-- Categories & Filters Bar -->
     <nav class="categories-bar" id="mobile-categories" aria-label="Danh mục phim">
@@ -173,7 +188,7 @@
     </section>
 
     <!-- Main Content Area -->
-    <main class="main-content">
+    <main class="main-content" id="main-content" tabindex="-1">
       <!-- 1. Home Multi-Section View -->
       <div id="home-view" class="home-view">
         <p class="home-purpose">Tìm phim và phát nổi trên mọi ứng dụng macOS.</p>
@@ -191,24 +206,24 @@
         <div class="section-header">
           <div class="section-title-wrap">
             <h2 id="section-title">Danh Sách Phim</h2>
-            <span id="result-count" class="result-count"></span>
+            <span id="result-count" class="result-count" role="status"></span>
           </div>
 
           <div class="section-controls">
             <!-- Audio Filter Sub-pills -->
-            <div class="audio-filter-pills">
-              <button class="audio-pill active" data-filter="all">Tất cả định dạng</button>
-              <button class="audio-pill pill-tm" data-filter="thuyetminh">Thuyết Minh</button>
-              <button class="audio-pill pill-lt" data-filter="longtieng">Lồng Tiếng</button>
-              <button class="audio-pill pill-cr" data-filter="chieurap">Chiếu Rạp</button>
+            <div class="audio-filter-pills" role="group" aria-label="Lọc theo định dạng">
+              <button class="audio-pill active" data-filter="all" aria-pressed="true">Tất cả định dạng</button>
+              <button class="audio-pill pill-tm" data-filter="thuyetminh" aria-pressed="false">Thuyết Minh</button>
+              <button class="audio-pill pill-lt" data-filter="longtieng" aria-pressed="false">Lồng Tiếng</button>
+              <button class="audio-pill pill-cr" data-filter="chieurap" aria-pressed="false">Chiếu Rạp</button>
             </div>
 
             <!-- Cinema View Mode Switcher -->
-            <div class="view-mode-toggle">
-              <button id="view-grid-btn" class="view-btn active" title="Hiển thị dạng Poster chuẩn">
+            <div class="view-mode-toggle" role="group" aria-label="Kiểu hiển thị">
+              <button id="view-grid-btn" class="view-btn active" type="button" aria-pressed="true" title="Hiển thị dạng Poster chuẩn">
                 Poster
               </button>
-              <button id="view-cinema-btn" class="view-btn" title="Hiển thị dạng Cinema Widescreen 16:9">
+              <button id="view-cinema-btn" class="view-btn" type="button" aria-pressed="false" title="Hiển thị dạng Cinema Widescreen 16:9">
                 Cinema 16:9
               </button>
             </div>
@@ -229,9 +244,9 @@
         <!-- Infinite scroll footer: the sentinel is what loads the next page -->
         <div id="feed-footer" class="feed-footer" data-state="idle">
           <div id="feed-sentinel" class="feed-sentinel" aria-hidden="true"></div>
-          <p id="feed-status" class="feed-status">Đang tải thêm…</p>
+          <p id="feed-status" class="feed-status" role="status">Đang tải thêm…</p>
           <button id="feed-retry-btn" class="feed-retry hidden" type="button">Thử lại</button>
-          <p id="feed-end" class="feed-end hidden">Đã hết danh sách</p>
+          <p id="feed-end" class="feed-end hidden" role="status">Đã hết danh sách</p>
         </div>
       </div>
     </main>
@@ -278,7 +293,7 @@
               <!-- Episodes Section with Multi-Server Switcher -->
               <div class="episodes-section">
                 <div class="episodes-header">
-                  <h3>Chọn bản phát nổi (Float Window):</h3>
+                  <h3>Chọn bản phát và tập phim:</h3>
                   <div id="server-tabs" class="server-tabs">
                     <!-- Audio & Server tabs rendered here: Vietsub, Thuyết Minh, Lồng Tiếng -->
                   </div>
@@ -299,14 +314,14 @@
         <div class="direct-modal-body">
           <div class="direct-modal-badge">STREAM LINK</div>
           <h2 id="direct-modal-title">Dán link phát nổi tức thì</h2>
-          <p class="direct-modal-desc">
-            Phát nổi mọi luồng HLS (.m3u8), video MP4, YouTube, hoặc link nhúng trực tiếp đè lên màn hình Cursor / Terminal.
+          <p id="direct-url-hint" class="direct-modal-desc">
+            Phát nổi link phim HTTPS từ nguồn được hỗ trợ, gồm HLS (.m3u8), MP4 và link nhúng. YouTube chỉ hỗ trợ các phim trong danh sách đã tuyển ở popup.
           </p>
           <div class="direct-form">
             <div class="form-group">
-              <label for="direct-url-input">Link stream hoặc YouTube</label>
+              <label for="direct-url-input">Link phim HTTPS</label>
               <div class="url-input-row">
-                <input type="url" id="direct-url-input" placeholder="https://example.com/video.m3u8" autocomplete="off" spellcheck="false" aria-describedby="direct-url-error">
+                <input type="url" id="direct-url-input" placeholder="https://kkphim.com/…" autocomplete="off" spellcheck="false" aria-describedby="direct-url-hint direct-url-error">
                 <button id="btn-direct-paste" class="btn-paste-clipboard" type="button" title="Dán từ Clipboard">
                   <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>
@@ -372,6 +387,8 @@
   <div id="catalog-audit" class="catalog-audit hidden" role="status" aria-live="polite"></div>
 
   <script src="ai-dubbing.js"></script>
+  <script src="site-access.js"></script>
+  <script src="native-status.js"></script>
   <script src="movie-service.js"></script>
   <script src="catalog.js"></script>
 </body>
