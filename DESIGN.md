@@ -47,3 +47,9 @@ Show movie ratings, quality, release year, audio type, and availability only whe
 ## Implementation map
 
 `extension/popup.css` and `extension/catalog.css` define the web role variables at `:root`; component rules consume those variables. `native-app/Sources/FloatWindow.swift` defines the matching AppKit roles in `VibeTheme`. If a component needs a new color, type size, spacing step, or radius, add its reason and role here before adding the value in code. Movie art, source logos, platform traffic-light controls, and one-pixel hairlines are content or platform exceptions.
+
+## Floating player chrome
+
+The native control strip uses three bands in 100 pt: a 13 pt semibold movie title with a secondary playback state, a timeline with a 144 pt clock for hour-long films, and a 32 pt playback-control row. Playback, ten-second seeking, mute, menu, and close remain visible down to 280 pt. Size presets and audio modes live in the menu; optional episode, volume, speed, and window controls appear only when there is room. A full-title tooltip supports truncated titles. Scrubbing preserves the preview clock until release. Paused playback keeps its controls visible, and a menu preference can keep the strip visible while playing.
+
+Native video presets use AppKit points: Small 480 pt, Medium 640 pt, Wide up to 960 pt. Wide also respects 75% of visible screen width and an 85% height budget including the control strip and gap. Remember the last preset across opens; automatic obstacle placement moves an explicitly sized player without silently shrinking it. Screen-fit constraints still apply.

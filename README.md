@@ -14,6 +14,35 @@ The only Chrome extension that creates truly always-on-top floating video window
   <sub><i>The FullFloatPiP window floating above a fullscreen Terminal — browser is not even visible, and the video keeps playing.</i></sub>
 </p>
 
+## Website access and dubbing defaults
+
+This build restricts page inspection to HTTPS movie providers: `phimapi.com`,
+`ophim1.com`, `nguonc.com`, `streamc.xyz`, `kkphimplayer.com`, `kkphimplayer6.com`,
+`kkphim.com`, and `ophim.com`, including their subdomains. `phimimg.com` is used
+for movie artwork. General browsing tabs, including YouTube,
+are outside this build's page-inspection scope. The popup includes a small
+curated list of 15 recent Asian YouTube films (2021–2024), with original release
+years, cast search, Vietnamese audio and Hong Kong cast filters. AI dubbing is
+allowed; generative AI films and misleading identities are excluded through
+publisher-based manual selection (see [selection policy](docs/youtube-movies.md)). Only their exact video IDs can play
+in the native embed, without granting the extension YouTube host permissions. The extension does not request
+`activeTab`, `tabs`, or cookie access. The native player also restricts remote
+page and iframe navigation to movie providers; media CDN requests remain available.
+The broader site-support descriptions below describe the original upstream build.
+
+The popup opens on **Phim hot** and fetches fresh recommendations every time.
+Recommendations combine recent/cinema titles and available ratings; they are
+not a measured YouTube trending chart. On provider failure, the last saved
+list is shown with a stale-data label.
+
+Click-through starts **off**, ignores the old automatically enabled preference,
+and is never enabled automatically by Lofi playback. An explicit toggle is saved.
+AI dubbing starts **off**. The previous default-on preference is ignored; enabling
+it requires a fresh explicit toggle. Native Offline Dub also starts off.
+After updating, reload the extension at `chrome://extensions`, reload any tabs
+that previously had its scripts, and rebuild/reinstall the native companion
+with `scripts/install.sh` to apply the native navigation restrictions.
+
 ## Why FullFloatPiP?
 
 Every existing PiP solution fails when you go fullscreen:
@@ -42,6 +71,10 @@ For a video already playing in the active Chrome tab, press **⌃⇧Y** (Control
 
 No window switching. No split screen. No leaving fullscreen. Just code and video, together.
 
+## Floating player sizes
+
+The native menu offers Small (480 pt), Medium (640 pt), and Wide (up to 960 pt), with the last selected preset remembered on reopen. Wide fits within 75% of visible screen width and an 85% height budget including its controls. On constrained screens, all presets fit within that budget while keeping their order. Automatic placement preserves the selected size and moves the player when possible. Controls stay visible while paused, or while “Luôn hiện thanh điều khiển” is enabled.
+
 ## Features
 
 - **Truly Always-on-Top** — Floats above ALL apps including macOS fullscreen applications
@@ -50,7 +83,7 @@ No window switching. No split screen. No leaving fullscreen. Just code and video
 - **YouTube-Style Control Bar** — Play/pause, skip 10s, volume slider, progress bar with seek, time display
 - **Auto Video Detection** — Badge shows video count; auto-detects SPA navigation (YouTube, Bilibili)
 - **Quick Float Shortcut** — Float the active tab's playing video without opening the popup
-- **Last-used Popup Tab** — Opens where you left off; movie data loads only when you visit the catalog
+- **Movie Popup** — Opens directly to hot movies and curated YouTube films; search and category browsing are available in the full catalog
 - **Aspect Ratio Lock** — Window maintains video aspect ratio during resize
 - **Position Memory** — Remembers window position and size between sessions
 - **Drag & Resize** — Drag from title bar, resize from any edge/corner
