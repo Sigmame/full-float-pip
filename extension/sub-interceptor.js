@@ -6,6 +6,7 @@
  */
 (function() {
     'use strict';
+    if (!globalThis.VibeSiteAccess?.allowsPage(window.location.href)) return;
     if (typeof window === 'undefined' || window.__vibeSubInterceptorMainInstalled) return;
     window.__vibeSubInterceptorMainInstalled = true;
 

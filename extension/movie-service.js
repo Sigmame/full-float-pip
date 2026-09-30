@@ -334,6 +334,54 @@ const MovieService = {
         return '';
     },
 
+    /** Fresh recommendations for every popup opening, with offline fallback. */
+    async getPopupHotMovies(limit = 8, source = 'all') {
+        const audio = ['thuyetminh', 'longtieng'].includes(source);
+        const tasks = audio ? [this._getKKPhimList(source, 1)] : source === 'nguonc'
+            ? [this._getNguonCList('moi', 1)] : ['chieurap', 'bo', 'le'].map(category => this._getKKPhimList(category, 1));
+        if (source === 'all') tasks.push(this._getNguonCList('moi', 1));
+        const results = await Promise.allSettled(tasks);
+        const cacheKey = source === 'all' ? 'vibe_popup_hot_movies' : `vibe_popup_hot_movies_${source}`;
+
+        const pools = results.filter(result => result.status === 'fulfilled').map(result => result.value);
+        const items = this.buildTopTrending(pools, limit);
+        if (items.length) {
+            try { await chrome.storage.local.set({ [cacheKey]: items }); } catch {}
+            return { items, stale: false };
+        }
+        let cached = [];
+        try { cached = (await chrome.storage.local.get(cacheKey))[cacheKey] || []; } catch {}
+        return { items: Array.isArray(cached) ? cached.slice(0, limit) : [], stale: true };
+    },
+
+    getYouTubeMovies(keyword = '', filter = 'all') {
+        const normalize = value => String(value || '').toLowerCase().normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd');
+        const query = normalize(keyword).trim();
+        return VibeSiteAccess.youtubeMovies.filter(movie => {
+            if (filter === 'hongkong' && !movie.hongKongCast) return false;
+            if (filter === 'vietnamese' && !movie.audio.includes('Việt')) return false;
+            return !query || normalize([movie.name, movie.original_name, movie.cast,
+                movie.year, movie.region, movie.genre, movie.channel].join(' ')).includes(query);
+        }).map(movie => ({
+            ...movie,
+            url: `https://www.youtube.com/watch?v=${movie.id}`,
+            thumb: `https://i.ytimg.com/vi/${movie.id}/mqdefault.jpg`
+        }));
+    },
+
+    buildYouTubeMovieFloatInfo(movie) {
+        const id = VibeSiteAccess.youtubeMovies.find(item => item.id === movie?.id)?.id;
+        if (!id) throw new Error('Phim YouTube chưa được cho phép.');
+        return {
+            pageUrl: `https://www.youtube.com/watch?v=${id}`,
+            embedUrl: `https://www.youtube.com/embed/${id}?autoplay=1&rel=0`,
+            title: VibeSiteAccess.youtubeMovies.find(item => item.id === id).name,
+            site: 'youtube', width: 640, height: 360, currentTime: 0,
+            preferEmbed: true, aiDubEnabled: false, focusSession: false
+        };
+    },
+
     /**
      * Top thịnh hành — no dedicated ranking API; sort latest + cinema by rating.
      */
@@ -393,33 +441,130 @@ const MovieService = {
         };
     },
 
+    // --- Home page cache: last good result per source, shown instantly on the next visit ---
+    _homeCacheMaxAgeMs: 12 * 60 * 60 * 1000,
+    _homeCacheKey(source) { return `vibe_home_v1_${source}`; },
+    _favoritesSection(favorites) {
+        return favorites.length ? {
+            id: 'mylist',
+            title: 'Danh sách của tôi',
+            subtitle: 'Phim đã lưu để xem sau',
+            items: favorites.slice(0, 12),
+            categoryKey: 'favorites'
+        } : null;
+    },
+    // Identifies what the visitor sees, so a refresh that changed nothing does not redraw the page.
+    homeSignature(data) {
+        const spots = (data.spotlights || []).map(m => m.slug).join(',');
+        const rows = (data.sections || []).filter(s => s.id !== 'mylist')
+            .map(s => `${s.id}:${(s.items || []).map(m => m.slug).join(',')}`).join('|');
+        return `${spots}#${rows}`;
+    },
+    homeRowCount(data) {
+        return (data.sections || []).filter(s => s.id !== 'mylist').length;
+    },
+    async getCachedHome(source) {
+        const key = this._homeCacheKey(source);
+        let entry = null;
+        try { entry = (await chrome.storage.local.get(key))[key]; } catch {}
+        if (!entry || !Array.isArray(entry.sections) || !entry.sections.length) return null;
+        if (!(Date.now() - entry.at < this._homeCacheMaxAgeMs)) return null;
+        // "My list" is personal and local: always rebuilt from current favourites, never from the cache.
+        let favorites = [];
+        try { favorites = await this.getFavorites(); } catch {}
+        const sections = entry.sections.filter(s => s.id !== 'mylist');
+        const mine = this._favoritesSection(favorites);
+        if (mine) sections.unshift(mine);
+        const spotlights = entry.spotlights || [];
+        return { spotlight: spotlights[0] || null, spotlights, sections, cachedAt: entry.at };
+    },
+    async _saveHomeCache(source, result) {
+        // Judge what would be stored, not what was returned: a page holding only "My list" is an outage.
+        const sections = (result.sections || []).filter(s => s.id !== 'mylist');
+        if (!sections.length) return;
+        const key = this._homeCacheKey(source);
+        try {
+            // A partial outage returns fewer rows without failing; never let it replace a fuller, still-valid page.
+            const existing = (await chrome.storage.local.get(key))[key];
+            const valid = existing && Array.isArray(existing.sections)
+                && (Date.now() - existing.at) < this._homeCacheMaxAgeMs;
+            if (valid && existing.sections.length > sections.length) return;
+            await chrome.storage.local.set({ [key]: { at: Date.now(), spotlights: result.spotlights, sections } });
+        } catch {}
+    },
+
+    // --- Grid cache: page 1 of each list, so reopening a category is instant ---
+    _feedCacheKey: 'vibe_feed_cache_v1',
+    _feedCacheMaxEntries: 12,
+    _feedCacheMaxAgeMs: 6 * 60 * 60 * 1000,
+    feedSignature(items) {
+        return (items || []).map(m => `${m.source || ''}:${m.slug}`).join(',');
+    },
+    async _readFeedCache() {
+        try {
+            const stored = (await chrome.storage.local.get(this._feedCacheKey))[this._feedCacheKey];
+            return stored && typeof stored === 'object' && stored.entries ? stored : { entries: {}, order: [] };
+        } catch { return { entries: {}, order: [] }; }
+    },
+    async getCachedFeed(key) {
+        const entry = (await this._readFeedCache()).entries[key];
+        if (!entry || !Array.isArray(entry.items) || !entry.items.length) return null;
+        if (!(Date.now() - entry.at < this._feedCacheMaxAgeMs)) return null;
+        return { items: entry.items, at: entry.at };
+    },
+    async saveFeedPage(key, items) {
+        if (!Array.isArray(items) || !items.length) return;
+        try {
+            const cache = await this._readFeedCache();
+            const existing = cache.entries[key];
+            const valid = existing && Array.isArray(existing.items) && (Date.now() - existing.at) < this._feedCacheMaxAgeMs;
+            // A partial outage answers with a fraction of a page; never let it replace a fuller one.
+            if (valid && items.length * 2 < existing.items.length) return;
+            cache.entries[key] = { at: Date.now(), items };
+            cache.order = (cache.order || []).filter(k => k !== key);
+            cache.order.push(key);
+            while (cache.order.length > this._feedCacheMaxEntries) delete cache.entries[cache.order.shift()];
+            await chrome.storage.local.set({ [this._feedCacheKey]: cache });
+        } catch {}
+    },
+
+    _requestTimeoutMs: 8000,
+    _audioEnrichTimeoutMs: 3500,
+    // Resolve with `fallback` instead of waiting on a provider that never answers.
+    _withTimeout(promise, ms, fallback) {
+        let timer;
+        const timeout = new Promise(resolve => { timer = setTimeout(() => resolve(fallback), ms); });
+        return Promise.race([Promise.resolve(promise).catch(() => fallback), timeout]).finally(() => clearTimeout(timer));
+    },
+
     /**
      * Get home sections for VibeWatch Cinema dashboard experience
      */
-    async getHomeSections(source = 'kkphim') {
-        const results = await Promise.allSettled([
-            this._getKKPhimList('chieurap', 1),
-            this._getNguonCList('moi', 1),
-            this._getKKPhimList('bo', 1),
-            this._getKKPhimList('thuyetminh', 1).then(items => this._withNguonCAudio(items, 'thuyetminh')),
-            this._getKKPhimList('longtieng', 1).then(items => this._withNguonCAudio(items, 'longtieng')),
-            this._getKKPhimList('le', 1),
-            this._getKKPhimList('hoathinh', 1),
+    async getHomeSections(source = 'kkphim', options = {}) {
+        const T = this._requestTimeoutMs;
+        const guard = p => this._withTimeout(p, T, []);
+        // Billboard lists first: they decide the spotlight, whose detail requests then
+        // run while the slower rows (dubbed, anime, favourites) are still loading.
+        const primary = [
+            guard(this._getKKPhimList('chieurap', 1)),
+            guard(this._getNguonCList('moi', 1)),
+            guard(this._getKKPhimList('bo', 1)),
+            guard(this._getKKPhimList('le', 1))
+        ];
+        const secondary = Promise.allSettled([
+            guard(this._getKKPhimList('thuyetminh', 1).then(items => this._withNguonCAudio(items, 'thuyetminh'))),
+            guard(this._getKKPhimList('longtieng', 1).then(items => this._withNguonCAudio(items, 'longtieng'))),
+            guard(this._getKKPhimList('hoathinh', 1)),
             this.getFavorites(),
             this.getBecauseYouWatched(12)
         ]);
+        const primaryResults = await Promise.allSettled(primary);
+        const listOf = r => (r.status === 'fulfilled' && Array.isArray(r.value)) ? r.value : [];
+        const chieuRapRaw = listOf(primaryResults[0]);
+        const dangChieuRaw = listOf(primaryResults[1]);
+        const phimBoRaw = listOf(primaryResults[2]);
+        const phimLeRaw = listOf(primaryResults[3]);
 
-        const chieuRapRaw = results[0].status === 'fulfilled' ? results[0].value : [];
-        const dangChieuRaw = results[1].status === 'fulfilled' ? results[1].value : [];
-        const phimBoRaw = results[2].status === 'fulfilled' ? results[2].value : [];
-        const thuyetMinhRaw = results[3].status === 'fulfilled' ? results[3].value : [];
-        const longTiengRaw = results[4].status === 'fulfilled' ? results[4].value : [];
-        const phimLeRaw = results[5].status === 'fulfilled' ? results[5].value : [];
-        const animeRaw = results[6].status === 'fulfilled' ? results[6].value : [];
-        const favorites = results[7].status === 'fulfilled' ? results[7].value : [];
-        const because = results[8].status === 'fulfilled' ? results[8].value : { items: [] };
-
-        // Billboard: 5–6 featured cinema & blockbuster titles with detail (parallel)
         const seenSlugs = new Set();
         const candidatePool = [...chieuRapRaw, ...dangChieuRaw, ...phimBoRaw, ...phimLeRaw];
         const spotlightCandidates = [];
@@ -431,13 +576,25 @@ const MovieService = {
                 if (spotlightCandidates.length >= 6) break;
             }
         }
-        const spotlightDetails = await Promise.allSettled(
-            spotlightCandidates.map(m => this.getDetail(m.slug, m.source || 'kkphim'))
+        const detailsPromise = Promise.allSettled(
+            spotlightCandidates.map(m => this._withTimeout(this.getDetail(m.slug, m.source || 'kkphim'), T, null))
         );
-        const spotlights = spotlightCandidates.map((m, i) => {
-            const d = spotlightDetails[i];
-            return d.status === 'fulfilled' ? { ...m, ...d.value } : m;
+        // The billboard is ready as soon as its details are; hand it over before the slower rows finish.
+        const spotlightsPromise = detailsPromise.then(spotlightDetails => {
+            const ready = spotlightCandidates.map((m, i) => {
+                const d = spotlightDetails[i];
+                return d.status === 'fulfilled' && d.value ? { ...m, ...d.value } : m;
+            });
+            try { options.onSpotlights?.(ready); } catch (e) { console.warn('[MovieService] onSpotlights failed:', e); }
+            return ready;
         });
+        const [secondaryResults, spotlights] = await Promise.all([secondary, spotlightsPromise]);
+        const thuyetMinhRaw = listOf(secondaryResults[0]);
+        const longTiengRaw = listOf(secondaryResults[1]);
+        const animeRaw = listOf(secondaryResults[2]);
+        const favorites = secondaryResults[3].status === 'fulfilled' ? secondaryResults[3].value : [];
+        const because = secondaryResults[4].status === 'fulfilled' ? secondaryResults[4].value : { items: [] };
+
         const spotlight = spotlights[0] || null;
 
         const topTrending = this.buildTopTrending([chieuRapRaw, phimBoRaw, phimLeRaw, dangChieuRaw], 10);
@@ -445,15 +602,8 @@ const MovieService = {
 
         const sections = [];
 
-        if (favorites.length) {
-            sections.push({
-                id: 'mylist',
-                title: 'Danh sách của tôi',
-                subtitle: 'Phim đã lưu để xem sau',
-                items: favorites.slice(0, 12),
-                categoryKey: 'favorites'
-            });
-        }
+        const mine = this._favoritesSection(favorites);
+        if (mine) sections.push(mine);
 
         if (topTrending.length) {
             sections.push({
@@ -522,11 +672,13 @@ const MovieService = {
             }
         );
 
-        return {
+        const result = {
             spotlight,
             spotlights,
             sections: sections.filter(s => s.items && s.items.length > 0)
         };
+        await this._saveHomeCache(source, result);
+        return result;
     },
 
     /**
@@ -958,33 +1110,43 @@ const MovieService = {
      * dubbed views used to look empty. This scans a window of the newest pages
      * once and caches the (small) result for the session, then pages through it.
      */
-    _nguoncAudioCache: {},
+    _nguoncAudioCache: null,
+    _nguoncAudioScan: null,
     _nguonCAudioPageSize: 24,
-    async _getNguonCAudioList(kind, page = 1, scanPages = 10) {
-        const entry = this._nguoncAudioCache[kind];
-        const fresh = entry && (Date.now() - entry.at) < 10 * 60 * 1000;
-        if (!fresh) {
-            const pages = [];
-            for (let p = 1; p <= scanPages; p++) pages.push(p);
-            const results = await Promise.allSettled(
-                pages.map(p => fetch(`https://phim.nguonc.com/api/films/phim-moi-cap-nhat?page=${p}`)
-                    .then(r => r.json()))
-            );
-            const all = [];
-            results.forEach(r => {
-                if (r.status !== 'fulfilled') return;
-                (r.value?.items || []).forEach(item => all.push(this._normalizeNguonCItem(item)));
-            });
-            this._nguoncAudioCache[kind] = {
-                at: Date.now(),
-                thuyetminh: all.filter(it => it.hasThuyetMinh),
-                longtieng: all.filter(it => it.hasLongTieng)
-            };
-            console.log(`[MovieService] NguonC audio scan: ${all.length} titles -> `
-                + `${this._nguoncAudioCache[kind].thuyetminh.length} TM, `
-                + `${this._nguoncAudioCache[kind].longtieng.length} LT`);
+    // One scan serves both kinds and is shared by concurrent callers, so the
+    // dubbed and voiced rows on the home page cost ten requests, not twenty.
+    async _scanNguonCAudio(scanPages = 10) {
+        const entry = this._nguoncAudioCache;
+        if (entry && (Date.now() - entry.at) < 10 * 60 * 1000) return entry;
+        if (!this._nguoncAudioScan) {
+            this._nguoncAudioScan = (async () => {
+                const pages = [];
+                for (let p = 1; p <= scanPages; p++) pages.push(p);
+                const results = await Promise.allSettled(
+                    pages.map(p => this._withTimeout(
+                        fetch(`https://phim.nguonc.com/api/films/phim-moi-cap-nhat?page=${p}`).then(r => r.json()),
+                        this._requestTimeoutMs, null))
+                );
+                const all = [];
+                results.forEach(r => {
+                    if (r.status !== 'fulfilled') return;
+                    (r.value?.items || []).forEach(item => all.push(this._normalizeNguonCItem(item)));
+                });
+                const scanned = {
+                    at: Date.now(),
+                    thuyetminh: all.filter(it => it.hasThuyetMinh),
+                    longtieng: all.filter(it => it.hasLongTieng)
+                };
+                // An empty scan is usually an outage; do not cache it for ten minutes.
+                if (all.length) this._nguoncAudioCache = scanned;
+                return scanned;
+            })().finally(() => { this._nguoncAudioScan = null; });
         }
-        const list = this._nguoncAudioCache[kind][kind] || [];
+        return this._nguoncAudioScan;
+    },
+    async _getNguonCAudioList(kind, page = 1, scanPages = 10) {
+        const scanned = await this._scanNguonCAudio(scanPages);
+        const list = scanned[kind] || [];
         const size = this._nguonCAudioPageSize;
         return list.slice((page - 1) * size, page * size);
     },
@@ -995,7 +1157,9 @@ const MovieService = {
      * wider than either source on its own.
      */
     async _withNguonCAudio(kkItems, kind) {
-        const ncItems = await this._getNguonCAudioList(kind).catch(() => []);
+        // The scan is slow; the KKPhim rows must not wait on it indefinitely.
+        const ncItems = await this._withTimeout(
+            this._getNguonCAudioList(kind).catch(() => []), this._audioEnrichTimeoutMs, []);
         return this._mergeAndDeduplicate(kkItems, ncItems);
     },
 

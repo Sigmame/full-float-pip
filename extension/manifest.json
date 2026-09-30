@@ -1,26 +1,23 @@
 {
   "manifest_version": 3,
   "name": "VibeFloat",
-  "version": "1.1.0",
-  "description": "Nhạc và phim nổi trên Cursor, VS Code và Terminal khi đang code.",
+  "version": "1.1.2",
+  "description": "Nh\u1ea1c v\u00e0 phim n\u1ed5i tr\u00ean Cursor, VS Code v\u00e0 Terminal khi \u0111ang code.",
   "permissions": [
-    "activeTab",
     "nativeMessaging",
     "scripting",
-    "cookies",
     "storage"
   ],
   "host_permissions": [
-    "https://*.youtube.com/*",
-    "https://phimapi.com/*",
     "https://*.phimapi.com/*",
-    "https://ophim1.com/*",
     "https://*.ophim1.com/*",
-    "https://phim.nguonc.com/*",
     "https://*.nguonc.com/*",
     "https://*.streamc.xyz/*",
-    "https://phimimg.com/*",
-    "*://*/*"
+    "https://*.kkphimplayer.com/*",
+    "https://*.kkphimplayer6.com/*",
+    "https://*.kkphim.com/*",
+    "https://*.ophim.com/*",
+    "https://phimimg.com/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -28,10 +25,18 @@
   "content_scripts": [
     {
       "matches": [
-        "<all_urls>"
+        "https://*.phimapi.com/*",
+        "https://*.ophim1.com/*",
+        "https://*.nguonc.com/*",
+        "https://*.streamc.xyz/*",
+        "https://*.kkphimplayer.com/*",
+        "https://*.kkphimplayer6.com/*",
+        "https://*.kkphim.com/*",
+        "https://*.ophim.com/*"
       ],
-      "all_frames": true,
+      "all_frames": false,
       "js": [
+        "site-access.js",
         "sub-interceptor.js"
       ],
       "world": "MAIN",
@@ -39,10 +44,18 @@
     },
     {
       "matches": [
-        "<all_urls>"
+        "https://*.phimapi.com/*",
+        "https://*.ophim1.com/*",
+        "https://*.nguonc.com/*",
+        "https://*.streamc.xyz/*",
+        "https://*.kkphimplayer.com/*",
+        "https://*.kkphimplayer6.com/*",
+        "https://*.kkphim.com/*",
+        "https://*.ophim.com/*"
       ],
-      "all_frames": true,
+      "all_frames": false,
       "js": [
+        "site-access.js",
         "ai-dubbing.js",
         "content.js"
       ],
@@ -55,7 +68,14 @@
         "sub-interceptor.js"
       ],
       "matches": [
-        "<all_urls>"
+        "https://*.phimapi.com/*",
+        "https://*.ophim1.com/*",
+        "https://*.nguonc.com/*",
+        "https://*.streamc.xyz/*",
+        "https://*.kkphimplayer.com/*",
+        "https://*.kkphimplayer6.com/*",
+        "https://*.kkphim.com/*",
+        "https://*.ophim.com/*"
       ]
     }
   ],
@@ -69,8 +89,11 @@
   },
   "commands": {
     "float-current-video": {
-      "suggested_key": { "default": "Ctrl+Shift+Y", "mac": "MacCtrl+Shift+Y" },
-      "description": "Phát nổi video đang xem trên tab hiện tại"
+      "suggested_key": {
+        "default": "Ctrl+Shift+Y",
+        "mac": "MacCtrl+Shift+Y"
+      },
+      "description": "Ph\u00e1t n\u1ed5i video \u0111ang xem tr\u00ean tab hi\u1ec7n t\u1ea1i"
     }
   },
   "icons": {

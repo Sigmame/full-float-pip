@@ -16,13 +16,16 @@
     } else if (typeof module === 'object' && module.exports) {
         module.exports = factory();
     } else {
+        if (typeof location !== 'undefined' && /^https?:$/.test(location.protocol) &&
+            !root.VibeSiteAccess?.allowsPage(location.href)) return;
         root.AIDubbingEngine = factory();
         root.aiDubbing = new root.AIDubbingEngine();
     }
 }(typeof self !== 'undefined' ? self : this, function () {
     'use strict';
 
-    const STORAGE_KEY = 'vibe_ai_dubbing_enabled';
+    // Ignore the legacy default-ON preference; enabling now requires a fresh choice.
+    const STORAGE_KEY = 'vibe_ai_dubbing_enabled_v2';
     const VOICE_PREF_KEY = 'vibe_ai_dubbing_voice_gender'; // 'female' | 'male'
     const RATE_PREF_KEY = 'vibe_ai_dubbing_base_rate';
 
@@ -45,7 +48,7 @@
 
     class AIDubbingEngine {
         constructor() {
-            this.enabled = true; // Default ON for seamless out-of-the-box dubbing
+            this.enabled = false; // Speech requires an explicit opt-in.
             this.voiceGender = 'female'; // 'female' | 'male'
             this.baseRate = 1.20;
             this.minRate = 1.0;

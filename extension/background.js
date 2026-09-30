@@ -1,20 +1,8 @@
 // background.js — Service Worker: message hub + Native Messaging communication
 
-importScripts('movie-service.js');
+importScripts('site-access.js', 'movie-service.js');
 
 const NATIVE_HOST_NAME = 'com.aspect.floatvideo';
-
-// Only these YouTube cookies travel to the native float window. They are what an
-// authenticated watch page needs; everything else (analytics, consent, and the
-// whole .google.com jar we used to copy) stays in the browser. The native side
-// re-checks this list, so widening it here alone is not enough.
-const YOUTUBE_SESSION_COOKIE_NAMES = new Set([
-    'SID', 'HSID', 'SSID', 'APISID', 'SAPISID', 'SIDCC', 'LOGIN_INFO',
-    '__Secure-1PSID', '__Secure-3PSID',
-    '__Secure-1PAPISID', '__Secure-3PAPISID',
-    '__Secure-1PSIDTS', '__Secure-3PSIDTS',
-    '__Secure-1PSIDCC', '__Secure-3PSIDCC',
-]);
 
 class FloatVideoManager {
     constructor() {
@@ -72,6 +60,15 @@ class FloatVideoManager {
     }
 
     async _doFloatVideo(videoInfo, playerPrefs) {
+        if (!videoInfo || [videoInfo.pageUrl, videoInfo.embedUrl].some(url => url && !VibeSiteAccess.allowsPlayback(url))) {
+            return { success: false, error: 'Ứng dụng chỉ được đọc các trang xem phim trong danh sách cho phép.' };
+        }
+        const youtubeID = VibeSiteAccess.youtubeMovieID(videoInfo.pageUrl);
+        if ((youtubeID || VibeSiteAccess.youtubeMovieID(videoInfo.embedUrl)) &&
+            (!youtubeID || videoInfo.site !== 'youtube' || videoInfo.preferEmbed !== true ||
+             VibeSiteAccess.youtubeMovieID(videoInfo.embedUrl) !== youtubeID)) {
+            return { success: false, error: 'Chỉ phát các phim YouTube được chọn trong popup.' };
+        }
         // Note: Restart the native process every time to ensure clean WKWebView state
         // macOS 12+ deprecated WKProcessPool, making in-process Web Content Process isolation impossible
         // The only reliable method is to restart the entire native app process
@@ -140,29 +137,6 @@ class FloatVideoManager {
         // sticky yt-player-* localStorage) — mirrored into the float window.
         if (videoInfo.site === 'youtube' && playerPrefs) {
             message.playerPrefs = playerPrefs;
-        }
-
-        // Mirror only the YouTube session cookies the float window needs. This
-        // used to also copy the entire .google.com jar and to forward domain /
-        // path, which let the payload declare where its cookies landed. The
-        // native side cannot honour httpOnly (HTTPCookiePropertyKey has no such
-        // key), so the narrower the set, the smaller the blast radius. Never
-        // widen this without re-reading docs/security-review.md.
-        if (videoInfo.site === 'youtube') {
-            try {
-                const ytCookies = await chrome.cookies.getAll({ domain: '.youtube.com' });
-                message.cookies = ytCookies
-                    .filter(c => YOUTUBE_SESSION_COOKIE_NAMES.has(c.name))
-                    .map(c => ({
-                        name: c.name,
-                        value: c.value,
-                        secure: c.secure,
-                    }));
-                console.log(`[FloatVideo] Sending ${message.cookies.length} session cookies`);
-            } catch (e) {
-                console.warn('[FloatVideo] Failed to get cookies:', e);
-                message.cookies = [];
-            }
         }
 
         try {
@@ -318,6 +292,10 @@ const manager = new FloatVideoManager();
 
 // Listen for messages from Content Script and Popup
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (sender.tab && !sender.url?.startsWith(chrome.runtime.getURL('')) && (!VibeSiteAccess.allowsPage(sender.url) || !VibeSiteAccess.allowsPage(sender.tab.url))) {
+        sendResponse({ success: false, error: 'Trang này không nằm trong danh sách nguồn phim cho phép.' });
+        return false;
+    }
     switch (message.type) {
         case 'VIDEOS_DETECTED': {
             if (sender.tab) {
@@ -346,12 +324,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             (async () => {
                 if (message.videoInfo && message.videoInfo.aiDubEnabled === undefined) {
                     try {
-                        const stored = await chrome.storage.local.get('vibe_ai_dubbing_enabled');
-                        message.videoInfo.aiDubEnabled = stored.vibe_ai_dubbing_enabled != null
-                            ? Boolean(stored.vibe_ai_dubbing_enabled)
-                            : true;
+                        const stored = await chrome.storage.local.get('vibe_ai_dubbing_enabled_v2');
+                        message.videoInfo.aiDubEnabled = stored.vibe_ai_dubbing_enabled_v2 != null
+                            ? Boolean(stored.vibe_ai_dubbing_enabled_v2)
+                            : false;
                     } catch (e) {
-                        message.videoInfo.aiDubEnabled = true;
+                        message.videoInfo.aiDubEnabled = false;
                     }
                 }
                 const result = await manager.floatVideo(message.videoInfo, message.playerPrefs || null);
@@ -452,9 +430,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 if (!manager.nativePort) manager.connectNative();
                 if (manager.nativePort) {
                     const result = await manager.sendCommand('getStatus');
-                    // Prefer native answer; fall back to preferred ON when absent.
+                    // Prefer native answer; fall back to OFF when absent.
                     if (typeof result?.isGhost !== 'boolean') {
-                        result.isGhost = manager.lastStatus?.isGhost ?? true;
+                        result.isGhost = manager.lastStatus?.isGhost ?? false;
                     }
                     sendResponse(result);
                 } else {
@@ -463,7 +441,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                         ...manager.lastStatus,
                         isGhost: typeof manager.lastStatus?.isGhost === 'boolean'
                             ? manager.lastStatus.isGhost
-                            : true
+                            : false
                     });
                 }
             })();
@@ -489,16 +467,15 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
     }
 });
 
-// One keystroke from Chrome to float the currently playing video. activeTab grants
-// access only to the tab on which the user invoked the command.
+// Shortcuts only inspect movie pages covered by the scoped host permissions.
 chrome.commands.onCommand.addListener(async (command, tab) => {
-    if (command !== 'float-current-video' || !tab?.id || !/^https?:/.test(tab.url || '')) return;
+    if (command !== 'float-current-video' || !tab?.id || !VibeSiteAccess.allowsPage(tab.url)) return;
     try {
         let response;
         try {
             response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_VIDEOS' });
         } catch {
-            await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['content.js'] });
+            await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ['site-access.js', 'ai-dubbing.js', 'content.js'] });
             response = await chrome.tabs.sendMessage(tab.id, { type: 'GET_VIDEOS' });
         }
         const videos = response?.videos || [];

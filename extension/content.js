@@ -1,6 +1,7 @@
 // content.js — Injected into video pages to detect and extract <video> elements
 (() => {
   'use strict';
+  if (!globalThis.VibeSiteAccess?.allowsPage(window.location.href)) return;
   if (globalThis.__vibeFloatDetectorLoaded) return;
   globalThis.__vibeFloatDetectorLoaded = true;
 

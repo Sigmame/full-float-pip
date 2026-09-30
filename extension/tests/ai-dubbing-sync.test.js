@@ -10,6 +10,8 @@ const deferred = () => {
 
 async function run() {
     const engine = new AIDubbingEngine();
+    assert.equal(engine.enabled, false, 'dubbing defaults to off');
+    engine.enabled = true;
     const video = { currentTime: 2, paused: false, seeking: false, textTracks: [] };
     engine.targetVideo = video;
     const spoken = [];
