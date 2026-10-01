@@ -36,6 +36,14 @@ APP_MACOS="$INSTALL_DIR/VibeFloat.app/Contents/MacOS"
 mkdir -p "$APP_MACOS"
 cp "$BUILD_OUTPUT" "$APP_MACOS/FloatVideo"
 cp "$PROJECT_DIR/native-app/Support/Info.plist" "$INSTALL_DIR/VibeFloat.app/Contents/Info.plist"
+# Catalogue UI for the standalone app window: the same files the extension serves.
+CATALOG_DIR="$INSTALL_DIR/VibeFloat.app/Contents/Resources/catalog"
+rm -rf "$CATALOG_DIR"
+mkdir -p "$CATALOG_DIR"
+for f in catalog.html catalog.css catalog.js movie-service.js site-access.js native-status.js ai-dubbing.js; do
+    cp "$PROJECT_DIR/extension/$f" "$CATALOG_DIR/$f"
+done
+cp -R "$PROJECT_DIR/extension/icons" "$CATALOG_DIR/icons"
 chmod +x "$APP_MACOS/FloatVideo"
 # Launch path must be inside the .app so speech-recognition permission can attach.
 ln -sfn "VibeFloat.app/Contents/MacOS/FloatVideo" "$INSTALL_DIR/FloatVideo"
@@ -91,9 +99,18 @@ echo "  3. Click 'Load unpacked'"
 echo "  4. Select: $PROJECT_DIR/extension"
 echo "  5. Copy the Extension ID (e.g.: abcdefghijklmnopqrstuvwxyz)"
 echo ""
+echo "  (Press Enter to skip: the standalone app does not need Chrome.)"
 read -p "  Enter Chrome Extension ID: " EXT_ID
 # Strip whitespace/normalise case before validating.
 EXT_ID="$(printf '%s' "$EXT_ID" | tr -d '[:space:]' | tr 'A-P' 'a-p')"
+
+if [ -z "$(printf '%s' "$EXT_ID" | tr -d '[:space:]')" ]; then
+    echo ""
+    echo "  Skipped the Chrome link. Open the app directly:"
+    echo "    open \"$INSTALL_DIR/VibeFloat.app\""
+    echo "  Run this script again with an Extension ID to use it from Chrome too."
+    exit 0
+fi
 
 # Fail closed. A wildcard here would let ANY extension on the machine talk to
 # this native host, which is a far bigger hole than a rerun: the host can drive
@@ -135,6 +152,7 @@ echo "  Native app: $INSTALL_DIR/FloatVideo"
 echo "  Messaging manifest: $NATIVE_HOST_DIR/com.aspect.floatvideo.json"
 echo "  Host stderr log: $HOME/Library/Logs/FloatVideo/native-host.log"
 echo "  Chrome extension: $PROJECT_DIR/extension"
+echo "  Standalone app:   open \"$INSTALL_DIR/VibeFloat.app\"   (movie catalogue in its own window)"
 echo ""
 echo "  Usage:"
 echo "  1. Open any video site (YouTube, Bilibili, etc.)"
