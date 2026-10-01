@@ -3557,18 +3557,3 @@ button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]
   #movie-modal .episodes-section { margin: 8px 20px; }
   .modal-similar { padding: 16px 20px 24px; }
 }
-
-/* Hero trailer (native app): a muted trailer fades in over the still image behind the text. */
-.hero-trailer { position: absolute; inset: 0; z-index: 1; overflow: hidden; opacity: 0; pointer-events: none; transition: opacity 0.9s ease; }
-.hero-trailer.is-playing { opacity: 1; }
-.hero-trailer iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; pointer-events: none; }
-.hero-trailer-controls { position: absolute; z-index: 6; right: clamp(14px, 2vw, 32px); bottom: 28px; display: flex; gap: 10px; }
-.hero-trailer-controls[hidden], .hero-trailer-btn[hidden] { display: none; }
-.hero-trailer-btn { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border-radius: 50%; cursor: pointer; color: #fff;
-  background: rgba(20, 20, 26, 0.55); border: 1px solid rgba(255, 255, 255, 0.4); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
-  transition: border-color 0.15s ease, background 0.15s ease, opacity 0.15s ease; }
-.hero-trailer-btn:hover { border-color: #fff; background: rgba(40, 40, 48, 0.8); }
-.hero-trailer-btn:focus-visible { outline: 2px solid #ff8da0; outline-offset: 2px; }
-.hero-trailer-btn.is-off { opacity: 0.6; }
-#hero-trailer-sound[aria-pressed="false"] .hero-sound-waves, #hero-trailer-sound[aria-pressed="true"] .hero-sound-muted { display: none; }
-@media (prefers-reduced-motion: reduce) { .hero-trailer { display: none; } }

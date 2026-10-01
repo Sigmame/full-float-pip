@@ -443,9 +443,7 @@ const MovieService = {
 
     // --- Home page cache: last good result per source, shown instantly on the next visit ---
     _homeCacheMaxAgeMs: 12 * 60 * 60 * 1000,
-    // Bump the number when the shape of the cached page changes (v2: spotlights carry trailerId), so an
-    // old entry is not shown forever just because it lists the same titles as the fresh data.
-    _homeCacheKey(source) { return `vibe_home_v2_${source}`; },
+    _homeCacheKey(source) { return `vibe_home_v1_${source}`; },
     _favoritesSection(favorites) {
         return favorites.length ? {
             id: 'mylist',
@@ -1055,16 +1053,8 @@ const MovieService = {
             director: (movie.director || []).join(', '),
             casts: (movie.actor || []).join(', '),
             episodes: episodes,
-            trailerId: this.youtubeIdFromUrl(movie.trailer_url),
             source: 'kkphim'
         };
-    },
-
-    /** The 11-character id of a YouTube watch / embed / shorts / youtu.be link, or ''. */
-    youtubeIdFromUrl(url) {
-        const match = String(url || '').trim().match(
-            /^https:\/\/(?:www\.|m\.)?(?:youtube(?:-nocookie)?\.com\/(?:watch\?(?:[^#\s]*&)?v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})(?:[&?#\/]|$)/);
-        return match ? match[1] : '';
     },
 
     // --- NguonC Implementation ---

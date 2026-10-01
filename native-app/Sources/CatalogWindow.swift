@@ -17,7 +17,7 @@ final class CatalogSchemeHandler: NSObject, WKURLSchemeHandler {
         "img-src 'self' https: data:",
         "font-src 'self' data:",
         "connect-src 'self'",
-        "frame-src https://www.youtube-nocookie.com https://www.youtube.com http://127.0.0.1:*",
+        "frame-src 'none'",
         "media-src https: blob:",
         "base-uri 'none'",
         "form-action 'none'"
@@ -77,8 +77,7 @@ final class CatalogWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         configuration.userContentController.addUserScript(shim)
         configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "vibe")
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-        // The billboard trailer may start muted on its own; anything with sound waits for a click.
-        configuration.mediaTypesRequiringUserActionForPlayback = .audio
+        configuration.mediaTypesRequiringUserActionForPlayback = .all
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.underPageBackgroundColor = NSColor(calibratedRed: 0.071, green: 0.071, blue: 0.086, alpha: 1)

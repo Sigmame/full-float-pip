@@ -28,7 +28,6 @@ function setDialogOpen(dialog, open) {
         if (activeDialog && activeDialog !== dialog) setDialogOpen(activeDialog, false);
         dialogReturnFocus = document.activeElement;
         activeDialog = dialog;
-        stopHeroTrailer();
         dialog.classList.remove('hidden');
         for (const child of document.querySelector('.app-container').children) {
             if (child !== dialog) child.inert = true;
@@ -118,144 +117,6 @@ function navigateView() {
 }
 
 // MARK: - UI Initialization
-// MARK: - Hero trailer (native app only)
-
-const HERO_TRAILER_PREF_KEY = 'vibe_hero_trailer_v1';
-const HERO_TRAILER_DELAY_MS = 2500;
-const HERO_TRAILER_MAX_MS = 45000;
-const HERO_TRAILER_START_TIMEOUT_MS = 10000;
-const heroTrailer = { timer: null, stopTimer: null, watchdog: null, release: null, frame: null, slug: '', enabled: true, soundOn: false, loaded: false };
-
-/** Whether the billboard may play a trailer now. Pure, so the rules are testable. */
-function heroTrailerAllowed({ native, enabled, reducedMotion, hidden, dialogOpen, trailerId }) {
-    return !!native && !!enabled && !reducedMotion && !hidden && !dialogOpen && /^[A-Za-z0-9_-]{11}$/.test(trailerId || '');
-}
-
-function heroTrailerState(spot) {
-    return {
-        native: !!window.__vibeNative?.shell,
-        enabled: heroTrailer.enabled,
-        reducedMotion: window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-        hidden: document.hidden,
-        dialogOpen: !!activeDialog,
-        trailerId: spot?.trailerId
-    };
-}
-
-function stopHeroTrailer() {
-    clearTimeout(heroTrailer.timer);
-    clearTimeout(heroTrailer.stopTimer);
-    clearTimeout(heroTrailer.watchdog);
-    heroTrailer.timer = heroTrailer.stopTimer = heroTrailer.watchdog = null;
-    heroTrailer.release?.();
-    heroTrailer.release = null;
-    heroTrailer.frame?.remove();
-    heroTrailer.frame = null;
-    heroTrailer.slug = '';
-    heroTrailer.soundOn = false;
-    const layer = document.getElementById('hero-trailer');
-    layer?.classList.remove('is-playing');
-    const sound = document.getElementById('hero-trailer-sound');
-    if (sound) { sound.hidden = true; sound.setAttribute('aria-pressed', 'false'); }
-}
-
-function scheduleHeroTrailer(spot) {
-    stopHeroTrailer();
-    if (!heroTrailerAllowed(heroTrailerState(spot))) return;
-    heroTrailer.timer = setTimeout(() => startHeroTrailer(spot), HERO_TRAILER_DELAY_MS);
-}
-
-async function startHeroTrailer(spot) {
-    const hero = document.getElementById('hero-spotlight');
-    const layer = document.getElementById('hero-trailer');
-    if (!hero || !layer || currentSpotlightMovie?.slug !== spot.slug) return;
-    if (!heroTrailerAllowed(heroTrailerState(spot))) return;
-    // Only while the billboard is what the reader is looking at.
-    const box = hero.getBoundingClientRect();
-    if (box.bottom < window.innerHeight * 0.4 || box.top > window.innerHeight * 0.6) return;
-
-    let reply;
-    try { reply = await chrome.runtime.sendMessage({ type: 'GET_TRAILER_URL', id: spot.trailerId }); } catch { return; }
-    if (!reply?.success || !reply.url || currentSpotlightMovie?.slug !== spot.slug || !heroTrailerAllowed(heroTrailerState(spot))) return;
-
-    const frame = document.createElement('iframe');
-    frame.src = reply.url;
-    frame.tabIndex = -1;
-    frame.setAttribute('allow', 'autoplay; encrypted-media');
-    frame.setAttribute('aria-hidden', 'true');
-    frame.setAttribute('referrerpolicy', 'no-referrer-when-downgrade');
-    layer.appendChild(frame);
-    heroTrailer.frame = frame;
-    heroTrailer.slug = spot.slug;
-    // The trailer page reports what the player is doing. Show it only once it is really playing; on
-    // an error, or if nothing starts, take it away and leave the still image exactly as it was.
-    const onReport = event => {
-        if (event.source !== frame.contentWindow) return;
-        const state = event.data?.vibeTrailerState;
-        if (state === 'playing') {
-            clearTimeout(heroTrailer.watchdog);
-            layer.classList.add('is-playing');
-            const sound = document.getElementById('hero-trailer-sound');
-            if (sound) sound.hidden = false;
-        } else if (state === 'error') {
-            stopHeroTrailer();
-        }
-    };
-    window.addEventListener('message', onReport);
-    heroTrailer.release = () => window.removeEventListener('message', onReport);
-    heroTrailer.watchdog = setTimeout(() => {
-        if (heroTrailer.frame === frame && !layer.classList.contains('is-playing')) stopHeroTrailer();
-    }, HERO_TRAILER_START_TIMEOUT_MS);
-    heroTrailer.stopTimer = setTimeout(stopHeroTrailer, HERO_TRAILER_MAX_MS);
-}
-
-function heroTrailerCommand(command) {
-    heroTrailer.frame?.contentWindow?.postMessage({ vibeTrailer: command }, '*');
-}
-
-function installHeroTrailer() {
-    if (!window.__vibeNative?.shell) return;
-    const controls = document.getElementById('hero-trailer-controls');
-    const sound = document.getElementById('hero-trailer-sound');
-    const toggle = document.getElementById('hero-trailer-toggle');
-    if (!controls || !sound || !toggle) return;
-    controls.hidden = false;
-
-    const syncToggle = () => {
-        toggle.setAttribute('aria-pressed', heroTrailer.enabled ? 'true' : 'false');
-        toggle.title = `Tự phát trailer: ${heroTrailer.enabled ? 'Bật' : 'Tắt'}`;
-        toggle.classList.toggle('is-off', !heroTrailer.enabled);
-    };
-    chrome.storage.local.get(HERO_TRAILER_PREF_KEY).then(stored => {
-        heroTrailer.enabled = stored?.[HERO_TRAILER_PREF_KEY] !== false;
-        syncToggle();
-    }).catch(() => {});
-
-    toggle.addEventListener('click', () => {
-        heroTrailer.enabled = !heroTrailer.enabled;
-        syncToggle();
-        chrome.storage.local.set({ [HERO_TRAILER_PREF_KEY]: heroTrailer.enabled });
-        if (heroTrailer.enabled) scheduleHeroTrailer(currentSpotlightMovie);
-        else stopHeroTrailer();
-    });
-    sound.addEventListener('click', () => {
-        heroTrailer.soundOn = !heroTrailer.soundOn;
-        heroTrailerCommand(heroTrailer.soundOn ? 'unmute' : 'mute');
-        sound.setAttribute('aria-pressed', heroTrailer.soundOn ? 'true' : 'false');
-        sound.title = sound.ariaLabel = heroTrailer.soundOn ? 'Tắt tiếng trailer' : 'Bật tiếng trailer';
-    });
-    // Leaving the billboard or the window ends the trailer.
-    document.addEventListener('visibilitychange', () => {
-        if (document.hidden) stopHeroTrailer();
-        else scheduleHeroTrailer(currentSpotlightMovie);   // the window came back to the front
-    });
-    window.addEventListener('scroll', () => {
-        if (!heroTrailer.frame) return;
-        const box = document.getElementById('hero-spotlight').getBoundingClientRect();
-        if (box.bottom < window.innerHeight * 0.25) stopHeroTrailer();
-    }, { passive: true });
-}
-
 // MARK: - Keyboard navigation between cards
 
 /**
@@ -486,7 +347,6 @@ function installHoverPreview() {
 
 function initUI() {
     installCardKeyboardNav();
-    installHeroTrailer();
     installHoverPreview();
     const mobileMenuBtn = document.getElementById('mobile-menu-btn');
     const closeMobileMenu = () => {
@@ -1523,7 +1383,6 @@ async function quickFloatMovie(slug, source) {
 
 // MARK: - Cinema Hero Spotlight Slideshow
 function stopHeroRotation() {
-    stopHeroTrailer();
     if (heroRotationTimer) {
         clearInterval(heroRotationTimer);
         heroRotationTimer = null;
@@ -1551,7 +1410,7 @@ function startHeroAutoPlay() {
         clearInterval(heroRotationTimer);
     }
     heroRotationTimer = setInterval(() => {
-        if (isHeroHovered || heroTrailer.frame) return;
+        if (isHeroHovered) return;
         nextHeroSlide();
     }, 6000);
 }
@@ -1655,7 +1514,6 @@ function renderHeroSpotlight(spot, opts = {}) {
 
     currentSpotlightMovie = spot;
     heroSection.classList.remove('hidden');
-    scheduleHeroTrailer(spot);
 
     const content = heroSection.querySelector('.hero-content');
     if (opts.soft && content) {

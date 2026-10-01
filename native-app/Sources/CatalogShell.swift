@@ -195,16 +195,6 @@ extension AppDelegate: CatalogBridgeDelegate {
                 completion(["success": true, "title": request["title"] as? String ?? ""])
             }
 
-        case "GET_TRAILER_URL":
-            // The billboard's muted trailer is served by the local HTTP server (see LocalHTTPServer).
-            let id = message["id"] as? String ?? ""
-            guard id.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil,
-                  let server = httpServer, server.port > 0 else {
-                completion(["success": false, "error": "Trailer unavailable"])
-                return
-            }
-            completion(["success": true, "url": "http://127.0.0.1:\(server.port)/trailer?v=\(id)&cap=\(server.localPlayCapability)"])
-
         case "CLOSE_FLOAT":
             closeFloatWindow()
             completion(["success": true])

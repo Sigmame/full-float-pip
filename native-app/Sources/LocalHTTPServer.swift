@@ -139,7 +139,7 @@ class LocalHTTPServer {
 
         // Browsers may omit both Origin and Referer, so these headers are only
         // defense in depth. The capability/token below is the auth decision.
-        if path.hasPrefix("/play") || path.hasPrefix("/trailer") {
+        if path.hasPrefix("/play") {
             guard queryValue("cap", in: path) == playCapability else {
                 sendErrorResponse(connection: connection, code: 403, message: "Forbidden")
                 return
@@ -160,8 +160,6 @@ class LocalHTTPServer {
 
         if path.hasPrefix("/play") {
             handlePlayRequest(path: path, connection: connection)
-        } else if path.hasPrefix("/trailer") {
-            handleTrailerRequest(path: path, connection: connection)
         } else if path == "/health" {
             sendResponse(connection: connection, body: "OK", contentType: "text/plain")
         } else if path.hasPrefix("/api/") {
@@ -252,66 +250,6 @@ class LocalHTTPServer {
         )
 
         sendResponse(connection: connection, body: html, contentType: "text/html; charset=utf-8")
-    }
-
-    /// A muted, controls-free YouTube trailer that fills its frame, for the catalogue's billboard.
-    /// It exists because YouTube refuses embeds without an http(s) referrer, which the catalogue's
-    /// own vibe:// origin cannot provide. The parent can mute, unmute, pause and play it.
-    private func handleTrailerRequest(path: String, connection: NWConnection) {
-        guard let components = URLComponents(string: "http://localhost\(path)"),
-              components.path == "/trailer",
-              let videoId = components.queryItems?.first(where: { $0.name == "v" })?.value,
-              videoId.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil else {
-            sendErrorResponse(connection: connection, code: 400, message: "Invalid video ID")
-            return
-        }
-        sendResponse(connection: connection, body: Self.trailerHTML(videoId: videoId, origin: "http://127.0.0.1:\(port)"),
-                     contentType: "text/html; charset=utf-8")
-    }
-
-    static func trailerHTML(videoId: String, origin: String) -> String {
-        let query = "autoplay=1&mute=1&controls=0&disablekb=1&fs=0&iv_load_policy=3&modestbranding=1&rel=0&playsinline=1&enablejsapi=1&origin=\(origin)"
-        return """
-        <!DOCTYPE html>
-        <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-        <style>
-          html, body { margin: 0; height: 100%; overflow: hidden; background: #000; }
-          iframe { position: absolute; left: 50%; top: 50%; border: 0; pointer-events: none;
-                   width: max(100vw, 177.78vh); height: max(100vh, 56.25vw); transform: translate(-50%, -50%); }
-        </style></head>
-        <body>
-        <iframe id="yt" tabindex="-1" allow="autoplay; encrypted-media" sandbox="allow-scripts allow-same-origin allow-presentation"
-                src="https://www.youtube-nocookie.com/embed/\(videoId)?\(query)"></iframe>
-        <script>
-          const frame = document.getElementById('yt');
-          const send = (func, args) => frame.contentWindow.postMessage(JSON.stringify({ event: 'command', func, args: args || [] }), '*');
-          const report = state => parent.postMessage({ vibeTrailerState: state }, '*');
-          // Ask the player to talk to us, so the catalogue only shows this once it is really playing.
-          frame.addEventListener('load', () => {
-            frame.contentWindow.postMessage(JSON.stringify({ event: 'listening', id: 1, channel: 'widget' }), '*');
-            send('addEventListener', ['onStateChange']);
-          });
-          window.addEventListener('message', event => {
-            if (event.source === frame.contentWindow) {
-              let data = event.data;
-              if (typeof data === 'string') { try { data = JSON.parse(data); } catch (error) { return; } }
-              if (!data) return;
-              if ((data.event === 'onStateChange' && data.info === 1) ||
-                  (data.event === 'infoDelivery' && data.info && data.info.playerState === 1)) report('playing');
-              else if (data.event === 'onError') report('error');
-              return;
-            }
-            if (event.source !== parent || !event.data) return;
-            switch (event.data.vibeTrailer) {
-              case 'mute': send('mute'); break;
-              case 'unmute': send('unMute'); send('setVolume', [60]); break;
-              case 'pause': send('pauseVideo'); break;
-              case 'play': send('playVideo'); break;
-            }
-          });
-        </script>
-        </body></html>
-        """
     }
 
     // MARK: - YouTube Player HTML
