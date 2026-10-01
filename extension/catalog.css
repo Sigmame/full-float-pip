@@ -3458,3 +3458,15 @@ button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]
   .audio-pill { flex: none; scroll-snap-align: start; white-space: nowrap; }
   .view-btn { padding-left: 12px; padding-right: 12px; }
 }
+
+/* Rail arrows are full-height side bars: the old vertical-centring offset pushed them up over the section header. */
+.rail-nav-btn,
+.rail-nav-btn:hover,
+.rail-nav-btn:hover:not(:disabled) { transform: none; }
+
+/* Top 10 cannot clip its artwork (the numeral hangs outside it), so it skips the hover zoom instead of spilling out of the card. */
+.movie-card-top10:hover .movie-poster,
+.movie-card-top10:focus-within .movie-poster { transform: none; }
+
+/* Episode badge stays above the hover overlay instead of dimming behind it, and never blocks the buttons. */
+.card-ep-badge { z-index: 5; pointer-events: none; }
