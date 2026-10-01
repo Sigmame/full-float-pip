@@ -257,53 +257,60 @@
         <button id="modal-close-btn" class="modal-close" title="Đóng (Esc)" type="button" aria-label="Đóng">&times;</button>
         
         <div class="modal-body">
-          <div class="modal-backdrop-wrap">
-            <img id="modal-backdrop-img" src="" alt="Backdrop">
-            <div class="modal-backdrop-grad"></div>
-          </div>
-
-          <div class="modal-detail-row">
-            <div class="modal-poster-wrap">
-              <img id="modal-poster" src="" alt="Poster">
-            </div>
-            
-            <div class="modal-info">
-              <div class="modal-title-row">
-                <h2 id="modal-title"></h2>
+          <div class="modal-hero">
+            <img id="modal-backdrop-img" src="" alt="">
+            <div class="modal-hero-fade"></div>
+            <div class="modal-hero-content">
+              <h2 id="modal-title"></h2>
+              <div id="modal-origin" class="modal-origin"></div>
+              <div class="modal-actions">
+                <button id="modal-play-btn" class="modal-play-btn" type="button">
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><polygon points="6,4 20,12 6,20"/></svg>
+                  <span id="modal-play-label">Phát nổi</span>
+                </button>
                 <button id="modal-fav-btn" class="modal-fav-btn" title="Thêm vào danh sách của tôi" type="button">+ Danh sách</button>
               </div>
-              <div id="modal-origin" class="modal-origin"></div>
-              
-              <div class="modal-badges">
-                <span id="modal-year" class="badge" hidden></span>
-                <span id="modal-quality" class="badge badge-accent" hidden></span>
-                <span id="modal-rating" class="badge badge-rating" hidden></span>
-                <span id="modal-current-ep" class="badge badge-info" hidden></span>
-                <span id="modal-source-badge" class="badge badge-source" hidden></span>
-              </div>
-
-              <div id="modal-meta" class="modal-meta">
-                <span id="modal-time" hidden></span>
-                <span id="modal-genres" hidden></span>
-                <span id="modal-countries" hidden></span>
-              </div>
-              
-              <p id="modal-desc" class="modal-desc" role="status" aria-live="polite"></p>
-
-              <!-- Episodes Section with Multi-Server Switcher -->
-              <div class="episodes-section">
-                <div class="episodes-header">
-                  <h3>Chọn bản phát và tập phim:</h3>
-                  <div id="server-tabs" class="server-tabs">
-                    <!-- Audio & Server tabs rendered here: Vietsub, Thuyết Minh, Lồng Tiếng -->
-                  </div>
-                </div>
-                <div id="episodes-grid" class="episodes-grid">
-                  <!-- Episode buttons rendered here -->
-                </div>
-              </div>
             </div>
           </div>
+
+          <div class="modal-columns">
+            <div class="modal-main">
+              <div class="modal-badges">
+                <span id="modal-rating" class="badge badge-rating" hidden></span>
+                <span id="modal-year" class="badge" hidden></span>
+                <span id="modal-quality" class="badge badge-accent" hidden></span>
+                <span id="modal-current-ep" class="badge badge-info" hidden></span>
+                <span id="modal-source-badge" class="badge badge-source" hidden></span>
+                <span id="modal-time" class="modal-time" hidden></span>
+              </div>
+              <p id="modal-desc" class="modal-desc" role="status" aria-live="polite"></p>
+            </div>
+            <dl class="modal-side">
+              <div id="modal-cast-row" hidden><dt>Diễn viên</dt><dd id="modal-cast"></dd></div>
+              <div id="modal-director-row" hidden><dt>Đạo diễn</dt><dd id="modal-director"></dd></div>
+              <div id="modal-genres-row" hidden><dt>Thể loại</dt><dd id="modal-genres"></dd></div>
+              <div id="modal-countries-row" hidden><dt>Quốc gia</dt><dd id="modal-countries"></dd></div>
+            </dl>
+          </div>
+
+          <!-- Episodes Section with Multi-Server Switcher -->
+          <div class="episodes-section">
+            <div class="episodes-header">
+              <h3>Chọn bản phát và tập phim:</h3>
+              <div id="server-tabs" class="server-tabs">
+                <!-- Audio & Server tabs rendered here: Vietsub, Thuyết Minh, Lồng Tiếng -->
+              </div>
+            </div>
+            <div id="episodes-grid" class="episodes-grid">
+              <!-- Episode buttons rendered here -->
+            </div>
+          </div>
+
+
+          <section id="modal-similar" class="modal-similar" hidden aria-labelledby="modal-similar-title">
+            <h3 id="modal-similar-title">Phim tương tự</h3>
+            <div id="modal-similar-grid" class="modal-similar-grid"></div>
+          </section>
         </div>
       </div>
     </div>

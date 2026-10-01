@@ -2211,6 +2211,32 @@ async function loadFavorites() {
 }
 
 // MARK: - Open Movie Detail Modal
+/** "Phim tương tự": other titles from the movie's first genre, shown under the episodes. */
+async function loadSimilarMovies(detail) {
+    const section = document.getElementById('modal-similar');
+    const grid = document.getElementById('modal-similar-grid');
+    if (!section || !grid) return;
+    section.hidden = true;
+    const genre = detail.genreSlugs?.[0];
+    if (!genre) return;
+    let items = [];
+    try { items = await MovieService.getByGenre(genre, 1); } catch { return; }
+    // The reader may have moved on to another title while this loaded.
+    if (currentMovie?.slug !== detail.slug) return;
+    const similar = items.filter(item => item?.slug && item.slug !== detail.slug).slice(0, 8);
+    if (!similar.length) return;
+    grid.innerHTML = similar.map(item => `
+        <button type="button" class="similar-card" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" aria-label="${escapeAttr(item.name)}">
+            <img loading="lazy" ${MovieImages.attr(item, 'wide')} alt="" width="320" height="180">
+            <span class="similar-title">${escapeHtml(item.name)}</span>
+            <span class="similar-meta">${escapeHtml([item.year, item.quality].filter(Boolean).join(' · '))}</span>
+        </button>`).join('');
+    grid.querySelectorAll('.similar-card').forEach(card => {
+        card.addEventListener('click', () => openMovieDetail(card.dataset.slug, card.dataset.source));
+    });
+    section.hidden = false;
+}
+
 async function openMovieDetail(slug, source = currentSource) {
     const modal = document.getElementById('movie-modal');
     setDialogOpen(modal, true);
@@ -2220,6 +2246,7 @@ async function openMovieDetail(slug, source = currentSource) {
     document.getElementById('modal-origin').textContent = '';
     document.getElementById('modal-desc').textContent = '';
     document.getElementById('server-tabs').innerHTML = '';
+    document.getElementById('modal-similar')?.setAttribute('hidden', '');
     document.getElementById('episodes-grid').innerHTML = '<span class="state-message">Đang tải danh sách tập phim…</span>';
 
     try {
@@ -2228,9 +2255,7 @@ async function openMovieDetail(slug, source = currentSource) {
 
         document.getElementById('modal-title').textContent = detail.name;
         document.getElementById('modal-origin').textContent = `${detail.origin_name || ''} ${detail.year ? '· ' + detail.year : ''}`;
-        const modalPoster = document.getElementById('modal-poster');
         const modalBackdrop = document.getElementById('modal-backdrop-img');
-        MovieImages.apply(modalPoster, detail, 'poster');
         MovieImages.apply(modalBackdrop, { poster: detail.thumb, thumb: detail.poster }, 'hero');
         setOptionalText('modal-year', detail.year);
         setOptionalText('modal-quality', detail.quality);
@@ -2240,6 +2265,12 @@ async function openMovieDetail(slug, source = currentSource) {
         setOptionalText('modal-time', detail.time);
         setOptionalText('modal-genres', detail.genres?.join(', '));
         setOptionalText('modal-countries', detail.countries?.join(', '));
+        setOptionalText('modal-cast', (detail.casts || '').split(',').slice(0, 6).join(',').trim());
+        setOptionalText('modal-director', detail.director);
+        ['cast', 'director', 'genres', 'countries'].forEach(name => {
+            const row = document.getElementById(`modal-${name}-row`);
+            if (row) row.hidden = !document.getElementById(`modal-${name}`)?.textContent.trim();
+        });
 
         document.getElementById('modal-desc').textContent = detail.description || 'Chưa có tóm tắt cho bộ phim này.';
 
@@ -2289,12 +2320,31 @@ async function openMovieDetail(slug, source = currentSource) {
         }
 
         renderEpisodes(detail.episodes, continueEntry);
+
+        // The big button does what the reader most likely wants: resume, or start.
+        const playBtn = document.getElementById('modal-play-btn');
+        const playLabel = document.getElementById('modal-play-label');
+        if (playBtn) {
+            playLabel.textContent = continueEntry ? `Tiếp tục: ${continueEntry.epName || 'Tập 1'}` : 'Phát nổi';
+            playBtn.disabled = !detail.episodes?.some(server => server.items?.length);
+            playBtn.onclick = async () => {
+                playBtn.disabled = true;
+                try {
+                    if (continueEntry) await floatContinueItem(continueEntry);
+                    else await quickFloatMovie(detail.slug, detail.source || source);
+                } finally {
+                    playBtn.disabled = false;
+                }
+            };
+        }
+        loadSimilarMovies(detail);
         if (!modal.contains(document.activeElement)) {
             modal.querySelector('.server-tab-btn, .ep-btn, #modal-close-btn')?.focus();
         }
     } catch (err) {
         console.error('Failed to get detail:', err);
         currentMovie = null;
+        document.getElementById('modal-similar')?.setAttribute('hidden', '');
         document.getElementById('modal-title').textContent = 'Không tải được phim';
         document.getElementById('modal-desc').textContent = 'Kiểm tra kết nối mạng rồi thử lại.';
         document.getElementById('server-tabs').innerHTML = '';
