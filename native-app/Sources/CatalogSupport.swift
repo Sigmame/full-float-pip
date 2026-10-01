@@ -4,6 +4,19 @@ import Foundation
 // which files it may be served, and where its data lives. No AppKit or WebKit here,
 // so tests can exercise all of it directly.
 
+// MARK: - Paths
+
+enum AppPaths {
+    /// The user's home, unless VIBEFLOAT_HOME points somewhere else. That lets tests and
+    /// development builds run without touching the real app data, port file or token.
+    static var home: URL {
+        if let override = ProcessInfo.processInfo.environment["VIBEFLOAT_HOME"], !override.isEmpty {
+            return URL(fileURLWithPath: override, isDirectory: true)
+        }
+        return FileManager.default.homeDirectoryForCurrentUser
+    }
+}
+
 // MARK: - Network policy
 
 /// The hosts the catalogue may reach through the native bridge: the movie providers

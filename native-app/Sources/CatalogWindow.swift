@@ -77,7 +77,8 @@ final class CatalogWindowController: NSObject, NSWindowDelegate, WKNavigationDel
         configuration.userContentController.addUserScript(shim)
         configuration.userContentController.addScriptMessageHandler(bridge, contentWorld: .page, name: "vibe")
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
-        configuration.mediaTypesRequiringUserActionForPlayback = .all
+        // The billboard trailer may start muted on its own; anything with sound waits for a click.
+        configuration.mediaTypesRequiringUserActionForPlayback = .audio
 
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.underPageBackgroundColor = NSColor(calibratedRed: 0.071, green: 0.071, blue: 0.086, alpha: 1)

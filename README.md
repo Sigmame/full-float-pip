@@ -56,6 +56,18 @@ current even when the catalogue window is closed. Only one standalone app runs a
 launch brings the first window forward. Launched by Chrome (`--native-messaging`), the app behaves
 exactly as before.
 
+In the standalone app the home billboard can play the movie's trailer, muted, behind the title after
+a short pause (only if the provider lists a YouTube trailer). It is served by the local HTTP server
+as a sandboxed, controls-free page, shown only after the player reports that it is really playing,
+dropped after 45 seconds or on any error, and stopped when you open a movie, change slide, scroll
+away or switch windows. Two buttons on the billboard turn the sound on and switch autoplay off (kept
+across launches); autoplay is also off under macOS "Reduce motion". The floating player's own
+YouTube restriction is unchanged.
+
+Development: `VIBEFLOAT_HOME=/some/folder` keeps the app's data, port file and token out of your real
+home; `VIBEFLOAT_CATALOG_DIR` serves the catalogue from a folder instead of the bundle; and
+`VIBEFLOAT_CATALOG_SELFTEST_JS` / `_OUT` run a script in the loaded window and write its JSON result.
+
 ## Why FullFloatPiP?
 
 Every existing PiP solution fails when you go fullscreen:
