@@ -7,11 +7,10 @@ import AVFoundation
 class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
 
     var floatWindow: FloatWindow?
-    var messageHandler: NativeMessageHandler?
     var httpServer: LocalHTTPServer?
-    // Standalone mode only: the catalogue window and its storage (nil when Chrome launched the app).
     var catalog: CatalogWindowController?
     var catalogStorage: CatalogStorage?
+    var menuBar: MenuBarController?
     let hotkeys = VibeHotkeys()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
@@ -29,26 +28,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
         // here: at launch there is no player to control, and registering now
         // would swallow ⌘⇧G / ⌘⇧B / ⌘⇧D system-wide for nothing.
 
-        guard LaunchMode.isNativeMessagingHost else {
-            // Launched from Finder / Dock: the catalogue is the app. Without a Chrome host
-            // there is no stdin protocol to listen to (it would read EOF and quit at once).
-            startStandalone()
-            return
-        }
-
-        // Start Native Messaging
-        messageHandler = NativeMessageHandler()
-        messageHandler?.onMessage = { [weak self] message in
-            DispatchQueue.main.async {
-                self?.handleMessage(message)
-            }
-        }
-        messageHandler?.startListening()
+        startStandalone()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if catalog != nil, catalog?.window.isVisible != true { showCatalog() }
         return true
+    }
+
+    func applicationDockMenu(_ sender: NSApplication) -> NSMenu? {
+        menuBar?.buildMenu()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -66,6 +55,17 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
                 ghostState = self.toggleGhostPreferringWindow()
             }
             return ["success": true, "isGhost": ghostState]
+        case "open":
+            // Open a player from a JSON payload (the same fields the catalogue sends). The usual address
+            // checks in performOpen apply; this exists for scripts and the end-to-end checks.
+            guard let raw = params["payload"], let data = raw.data(using: .utf8),
+                  let payload = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else {
+                return ["success": false, "error": "Missing or invalid payload"]
+            }
+            var failure: String?
+            DispatchQueue.main.sync { failure = self.performOpen(payload) }
+            if let failure = failure { return ["success": false, "error": failure] }
+            return ["success": true]
         case "status":
             if let win = self.floatWindow {
                 var progress: [String: Any] = [:]
@@ -265,7 +265,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
         let url = msg["url"] as? String ?? ""
         let videoSrc = msg["videoSrc"] as? String ?? ""
         let embedUrl = msg["embedUrl"] as? String ?? ""
-        // Native messaging must enforce the same document boundary as Chrome.
+        // Nothing to play: refuse here rather than open an empty player.
+        if url.isEmpty && videoSrc.isEmpty && embedUrl.isEmpty { return "Thiếu địa chỉ video." }
+        // Every entry point (catalogue, local API) gets the same document boundary.
         // Direct media may use a CDN, but arbitrary web pages are never opened.
         let curatedMovieID = FloatWindow.curatedYouTubeMovieID(url)
         let curatedYouTubeEmbed = msg["site"] as? String == "youtube"
@@ -316,186 +318,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
         return nil
     }
 
-    func handleMessage(_ msg: [String: Any]) {
-        guard let action = msg["action"] as? String else {
-            messageHandler?.sendMessage([
-                "type": "error",
-                "error": "Missing 'action' field"
-            ])
-            return
-        }
-
-        switch action {
-        case "open":
-            if let error = performOpen(msg) {
-                messageHandler?.sendMessage(["type": "error", "error": error])
-                return
-            }
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "opened",
-                "title": msg["title"] as? String ?? "VibeFloat",
-                "isGhost": currentGhostState(),
-                "isAIDubEnabled": floatWindow?.isAIDubbingEnabled ?? false
-            ])
-
-        case "close":
-            closeFloatWindow()
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "closed"
-            ])
-
-        case "ping":
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "pong"
-            ])
-
-        case "toggleGhost":
-            let ghostState = toggleGhostPreferringWindow()
-            messageHandler?.sendMessage([
-                "type": "status",
-                "isGhost": ghostState
-            ])
-
-        case "toggleAIDub":
-            floatWindow?.toggleAIDubbing()
-            messageHandler?.sendMessage([
-                "type": "status",
-                "isAIDubEnabled": floatWindow?.isAIDubbingEnabled ?? false
-            ])
-
-        case "speakAIDub":
-            let text = msg["text"] as? String ?? ""
-            let duration = (msg["duration"] as? NSNumber)?.doubleValue ?? (msg["duration"] as? Double ?? 0)
-            if self.floatWindow == nil {
-                self.speakBrowserAIDub(text: text, duration: duration)
-            }
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "speaking"
-            ])
-
-        case "stopAIDub":
-            if let floatWin = self.floatWindow {
-                floatWin.stopAIDub()
-            }
-            self.stopBrowserAIDub()
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "stopped"
-            ])
-
-        case "prefetchAIDub":
-            let text = msg["text"] as? String ?? ""
-            if !text.isEmpty && self.floatWindow == nil {
-                self.prefetchBrowserAIDubText(text)
-            }
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "prefetched"
-            ])
-
-        case "prefetchBatchAIDub":
-            let texts = msg["texts"] as? [String] ?? []
-            if !texts.isEmpty && self.floatWindow == nil {
-                self.prefetchBatchBrowserAIDubTexts(texts)
-            }
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "prefetched"
-            ])
-
-        case "setDubVoice":
-            if let voiceParam = msg["voice"] as? String ?? msg["gender"] as? String {
-                if voiceParam.lowercased().contains("nam") || voiceParam.lowercased().contains("male") {
-                    EdgeTTSManager.shared.selectedVoice = .namMinh
-                } else {
-                    EdgeTTSManager.shared.selectedVoice = .hoaiMy
-                }
-            }
-            let voice = EdgeTTSManager.shared.selectedVoice
-            messageHandler?.sendMessage([
-                "type": "status",
-                "voice": voice.rawValue,
-                "name": voice.displayName
-            ])
-
-        case "togglePlayPause":
-            floatWindow?.togglePlayPause()
-            messageHandler?.sendMessage([
-                "type": "status",
-                "isPlaying": floatWindow?.isPlaying ?? false
-            ])
-
-        case "pause":
-            floatWindow?.pause()
-            messageHandler?.sendMessage(["type": "status", "paused": true])
-
-        case "play":
-            floatWindow?.play()
-            messageHandler?.sendMessage(["type": "status", "playing": true])
-
-        case "skipForward":
-            floatWindow?.skipForward()
-            messageHandler?.sendMessage(["type": "status", "ok": true])
-
-        case "skipBackward":
-            floatWindow?.skipBackward()
-            messageHandler?.sendMessage(["type": "status", "ok": true])
-
-        case "duck":
-            floatWindow?.duckVolume()
-            messageHandler?.sendMessage(["type": "status", "ducked": true])
-
-        case "unduck":
-            floatWindow?.unduckVolume()
-            messageHandler?.sendMessage(["type": "status", "unducked": true])
-
-        case "setOpacity":
-            if let val = msg["value"] as? Double {
-                floatWindow?.setOpacity(val)
-                messageHandler?.sendMessage(["type": "status", "opacity": val])
-            }
-
-        case "toggleBoss":
-            floatWindow?.toggleBossHide()
-            messageHandler?.sendMessage(["type": "status", "visible": floatWindow?.isWindowVisible ?? false])
-
-        case "nextEpisode":
-            let ok = floatWindow?.switchEpisode(by: 1) ?? false
-            messageHandler?.sendMessage(["type": "status", "ok": ok])
-
-        case "prevEpisode":
-            let ok = floatWindow?.switchEpisode(by: -1) ?? false
-            messageHandler?.sendMessage(["type": "status", "ok": ok])
-
-        case "getStatus":
-            var progress: [String: Any] = [:]
-            if let win = floatWindow {
-                progress = win.progressPayload()
-            }
-            messageHandler?.sendMessage([
-                "type": "status",
-                "title": floatWindow?.videoTitle ?? "",
-                "isPlaying": floatWindow?.isPlaying ?? false,
-                "isGhost": currentGhostState(),
-                "opacity": floatWindow?.alphaValue ?? 1.0,
-                "volume": floatWindow?.currentVolume ?? 1.0,
-                "currentTime": floatWindow?.playbackElapsed ?? 0,
-                "duration": floatWindow?.playbackDuration ?? 0,
-                "progress": progress
-            ])
-
-        default:
-            messageHandler?.sendMessage([
-                "type": "error",
-                "error": "Unknown action: \(action)"
-            ])
-        }
-    }
-
     /// Live window state when open; otherwise the persisted preference (default ON).
     func currentGhostState() -> Bool {
         floatWindow?.isGhostMode ?? FloatWindow.preferredGhostMode
@@ -527,10 +349,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
             ghost: { [weak self] in
                 guard let self = self else { return }
                 let state = self.toggleGhostPreferringWindow()
-                self.messageHandler?.sendMessage([
-                    "type": "status",
-                    "isGhost": state
-                ])
+                self.tellCatalog(["type": "NATIVE_STATUS_BROADCAST", "connected": true, "isGhost": state])
             },
             boss: { [weak self] in self?.floatWindow?.toggleBossHide() },
             duck: { [weak self] in self?.floatWindow?.toggleDuck() },
@@ -603,8 +422,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
         }
 
         floatWindow?.onProgress = { [weak self] payload in
-            self?.messageHandler?.sendMessage(payload)
-            // Standalone: "Tiếp tục xem" is saved here, so it works with the window closed.
+            // "Tiếp tục xem" is saved here, so it works with the window closed.
             if let self = self, let storage = self.catalogStorage {
                 CatalogProgress.apply(payload, to: storage)
                 self.tellCatalog(payload)
@@ -616,10 +434,6 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
             // The window was closed directly (not replaced), so release the
             // hotkeys too — otherwise ⌘⇧G stays swallowed until the app quits.
             self?.hotkeys.uninstall()
-            self?.messageHandler?.sendMessage([
-                "type": "status",
-                "status": "closed"
-            ])
             self?.tellCatalog(["type": "NATIVE_STATUS_BROADCAST", "connected": true, "isGhost": self?.currentGhostState() ?? false])
         }
 

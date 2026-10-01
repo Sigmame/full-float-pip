@@ -1,13 +1,7 @@
 import Cocoa
 import WebKit
 
-// MARK: - Standalone mode: the catalogue as the app's own window
-
-/// How the process was started. Chrome launches the app with `--native-messaging` and no UI;
-/// anything else (Finder, Dock, `open`) is the standalone app with the catalogue window.
-enum LaunchMode {
-    static var isNativeMessagingHost: Bool { CommandLine.arguments.contains("--native-messaging") }
-}
+// MARK: - The app: the catalogue in its own window, a menu bar item, and the floating player
 
 /// One standalone app at a time: a second launch asks the first to show its window and quits.
 enum StandaloneInstance {
@@ -49,7 +43,7 @@ extension AppDelegate {
         }
     }
 
-    /// Standalone startup: single instance, menu bar, then the catalogue window.
+    /// Startup: single instance, menus, then the catalogue window.
     func startStandalone() {
         guard StandaloneInstance.acquire() else {
             DistributedNotificationCenter.default().postNotificationName(
@@ -58,6 +52,7 @@ extension AppDelegate {
         }
         NSApp.setActivationPolicy(.regular)
         installMainMenu()
+        menuBar = MenuBarController(delegate: self)
         DistributedNotificationCenter.default().addObserver(
             forName: StandaloneInstance.showCatalogNotification, object: nil, queue: .main) { [weak self] _ in
             self?.showCatalog()
@@ -65,6 +60,8 @@ extension AppDelegate {
 
         let storage = CatalogStorage(fileURL: StandaloneInstance.supportDirectory.appendingPathComponent("catalog-storage.json"))
         catalogStorage = storage
+        // Scripted checks drive the player over the local API and do not need the catalogue window.
+        if ProcessInfo.processInfo.environment["VIBEFLOAT_NO_CATALOG"] == "1" { return }
         guard let root = Self.catalogAssetsRoot() else {
             let alert = NSAlert()
             alert.messageText = "Không tìm thấy giao diện kho phim"
@@ -211,7 +208,8 @@ extension AppDelegate: CatalogBridgeDelegate {
             completion(["success": true])
 
         case "SET_AI_DUB_VOICE":
-            handleMessage(["action": "setDubVoice", "voice": message["voice"] as? String ?? message["gender"] as? String ?? ""])
+            let voice = message["voice"] as? String ?? message["gender"] as? String ?? ""
+            _ = runNativeCommand("setDubVoice", params: ["voice": voice])
             completion(["success": true])
 
         case "TOGGLE_AI_DUB", "STOP_AI_DUB", "SPEAK_AI_DUB", "PREFETCH_AI_DUB", "PREFETCH_BATCH_AI_DUB":
