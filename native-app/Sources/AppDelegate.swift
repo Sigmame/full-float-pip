@@ -9,211 +9,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
     var floatWindow: FloatWindow?
     var messageHandler: NativeMessageHandler?
     var httpServer: LocalHTTPServer?
+    // Standalone mode only: the catalogue window and its storage (nil when Chrome launched the app).
+    var catalog: CatalogWindowController?
+    var catalogStorage: CatalogStorage?
     let hotkeys = VibeHotkeys()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Start local HTTP server (provides valid Referer for YouTube embed + Vibe-Sync REST API)
         httpServer = LocalHTTPServer()
         httpServer?.onCommand = { [weak self] command, params in
-            guard let self = self else {
-                return ["success": false, "error": "App not ready"]
-            }
-
-            // Ghost preference + status work even when no float window is open.
-            switch command {
-            case "ghost", "toggleGhost":
-                var ghostState = false
-                DispatchQueue.main.sync {
-                    ghostState = self.toggleGhostPreferringWindow()
-                }
-                return ["success": true, "isGhost": ghostState]
-            case "status":
-                if let win = self.floatWindow {
-                    var progress: [String: Any] = [:]
-                    DispatchQueue.main.sync { progress = win.progressPayload() }
-                    return [
-                        "success": true,
-                        "title": win.videoTitle,
-                        "isPlaying": win.isPlaying,
-                        "isGhost": win.isGhostMode,
-                        "isAIDubEnabled": win.isAIDubbingEnabled,
-                        "dubVoice": EdgeTTSManager.shared.selectedVoice.rawValue,
-                        "dubVoiceName": EdgeTTSManager.shared.selectedVoice.displayName,
-                        "autoNext": FloatWindow.preferredAutoNextEpisode,
-                        "skipIntro": FloatWindow.preferredAutoSkipIntro,
-                        "sizePreset": FloatWindow.savedSizePreset.rawValue,
-                        "opacity": win.alphaValue,
-                        "volume": win.currentVolume,
-                        "width": win.frame.width,
-                        "height": win.frame.height,
-                        "currentTime": win.playbackElapsed,
-                        "duration": win.playbackDuration,
-                        "progress": progress
-                    ]
-                }
-                return [
-                    "success": true,
-                    "title": "",
-                    "isPlaying": false,
-                    "isGhost": FloatWindow.preferredGhostMode,
-                    "isAIDubEnabled": false,
-                    "opacity": 1.0,
-                    "volume": 1.0,
-                    "width": 0,
-                    "height": 0,
-                    "currentTime": 0,
-                    "duration": 0,
-                    "progress": [:] as [String: Any]
-                ]
-            default:
-                break
-            }
-
-            guard let win = self.floatWindow else {
-                return ["success": false, "error": "No active window"]
-            }
-            switch command {
-            case "toggle", "togglePlayPause":
-                DispatchQueue.main.async { win.togglePlayPause() }
-                return ["success": true, "isPlaying": win.isPlaying]
-            case "pause":
-                DispatchQueue.main.async { win.pause() }
-                return ["success": true, "paused": true]
-            case "play":
-                DispatchQueue.main.async { win.play() }
-                return ["success": true, "playing": true]
-            case "forward":
-                DispatchQueue.main.async { win.skipForward() }
-                return ["success": true]
-            case "backward":
-                DispatchQueue.main.async { win.skipBackward() }
-                return ["success": true]
-            case "duck":
-                DispatchQueue.main.async { win.duckVolume() }
-                return ["success": true, "ducked": true]
-            case "unduck":
-                DispatchQueue.main.async { win.unduckVolume() }
-                return ["success": true, "ducked": false]
-            case "aidub", "aiDub", "toggleAIDub":
-                var state = false
-                DispatchQueue.main.sync {
-                    win.toggleAIDubbing()
-                    state = win.isAIDubbingEnabled
-                }
-                return ["success": true, "isAIDubEnabled": state]
-            case "dubVoice", "edgeVoice", "setDubVoice":
-                if let voiceParam = params["voice"] ?? params["val"] {
-                    if voiceParam.lowercased().contains("nam") {
-                        EdgeTTSManager.shared.selectedVoice = .namMinh
-                    } else {
-                        EdgeTTSManager.shared.selectedVoice = .hoaiMy
-                    }
-                }
-                let voice = EdgeTTSManager.shared.selectedVoice
-                DispatchQueue.main.async {
-                    win.showHUD("Giọng đọc Edge AI: \(voice.displayName)")
-                }
-                return ["success": true, "voice": voice.rawValue, "name": voice.displayName]
-            case "opacity":
-                if let valStr = params["val"], let val = Double(valStr) {
-                    DispatchQueue.main.async { win.setOpacity(val) }
-                    return ["success": true, "opacity": val]
-                }
-                return ["success": false, "error": "Missing val parameter"]
-            case "bigger", "grow", "sizeup":
-                var size = NSSize.zero
-                DispatchQueue.main.sync { size = win.adjustWindowScale(by: 1.18) }
-                return ["success": true, "width": size.width, "height": size.height]
-            case "smaller", "shrink", "sizedown":
-                var size = NSSize.zero
-                DispatchQueue.main.sync { size = win.adjustWindowScale(by: 1.0 / 1.18) }
-                return ["success": true, "width": size.width, "height": size.height]
-            case "size", "resize":
-                if let wStr = params["w"] ?? params["width"], let w = Double(wStr) {
-                    var size = NSSize.zero
-                    DispatchQueue.main.sync { size = win.setWindowWidth(CGFloat(w)) }
-                    return ["success": true, "width": size.width, "height": size.height]
-                }
-                if let factorStr = params["factor"] ?? params["scale"], let factor = Double(factorStr), factor > 0 {
-                    var size = NSSize.zero
-                    DispatchQueue.main.sync { size = win.adjustWindowScale(by: CGFloat(factor)) }
-                    return ["success": true, "width": size.width, "height": size.height]
-                }
-                return [
-                    "success": true,
-                    "width": win.frame.width,
-                    "height": win.frame.height
-                ]
-            case "boss":
-                var visible = false
-                DispatchQueue.main.sync {
-                    win.toggleBossHide()
-                    visible = win.isWindowVisible
-                }
-                return ["success": true, "visible": visible]
-            case "nextEpisode", "next":
-                var ok = false
-                DispatchQueue.main.sync { ok = win.switchEpisode(by: 1) }
-                return ["success": ok]
-            case "prevEpisode", "prev", "previousEpisode":
-                var ok = false
-                DispatchQueue.main.sync { ok = win.switchEpisode(by: -1) }
-                return ["success": ok]
-            case "autoNext", "autonext":
-                if let val = params["val"] ?? params["on"] {
-                    let enabled = ["1","true","on","yes"].contains(val.lowercased())
-                    DispatchQueue.main.sync {
-                        _ = FloatWindow.setPreferredAutoNextEpisode(enabled)
-                        win.refreshWatchAssistFromAPI()
-                    }
-                    return ["success": true, "autoNext": enabled]
-                } else {
-                    var enabled = false
-                    DispatchQueue.main.sync {
-                        win.toggleAutoNextEpisode()
-                        enabled = FloatWindow.preferredAutoNextEpisode
-                    }
-                    return ["success": true, "autoNext": enabled]
-                }
-            case "skipIntro", "skipintro", "autoSkipIntro":
-                if let val = params["val"] ?? params["on"] {
-                    let enabled = ["1","true","on","yes"].contains(val.lowercased())
-                    DispatchQueue.main.sync {
-                        _ = FloatWindow.setPreferredAutoSkipIntro(enabled)
-                        win.refreshWatchAssistFromAPI()
-                    }
-                    return ["success": true, "skipIntro": enabled]
-                } else {
-                    var enabled = false
-                    DispatchQueue.main.sync {
-                        win.toggleAutoSkipIntro()
-                        enabled = FloatWindow.preferredAutoSkipIntro
-                    }
-                    return ["success": true, "skipIntro": enabled]
-                }
-            case "skipIntroNow", "skipintronow":
-                DispatchQueue.main.sync { win.manualSkipIntro() }
-                return ["success": true]
-            case "preset", "sizePreset":
-                let name = (params["val"] ?? params["name"] ?? params["id"] ?? "").lowercased()
-                let map: [String: FloatWindow.SizePreset] = [
-                    "mini": .mini, "nho": .mini, "small": .mini,
-                    "standard": .standard, "vua": .standard, "medium": .standard,
-                    "wide": .wide, "rong": .wide,
-                    "pocket": .pocket, "lon": .pocket, "max": .pocket
-                ]
-                guard let preset = map[name] else {
-                    return ["success": false, "error": "Unknown preset. Use mini|standard|wide|pocket"]
-                }
-                var width: CGFloat = 0
-                DispatchQueue.main.sync {
-                    win.applySizePreset(preset)
-                    width = win.frame.width
-                }
-                return ["success": true, "preset": preset.rawValue, "width": width]
-            default:
-                return ["success": false, "error": "Unknown command \(command)"]
-            }
+            self?.runNativeCommand(command, params: params) ?? ["success": false, "error": "App not ready"]
         }
 
         httpServer?.start { port in
@@ -223,6 +28,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
         // Hotkeys are registered per floating window in openFloatWindow(), not
         // here: at launch there is no player to control, and registering now
         // would swallow ⌘⇧G / ⌘⇧B / ⌘⇧D system-wide for nothing.
+
+        guard LaunchMode.isNativeMessagingHost else {
+            // Launched from Finder / Dock: the catalogue is the app. Without a Chrome host
+            // there is no stdin protocol to listen to (it would read EOF and quit at once).
+            startStandalone()
+            return
+        }
 
         // Start Native Messaging
         messageHandler = NativeMessageHandler()
@@ -234,8 +46,274 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
         messageHandler?.startListening()
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if catalog != nil, catalog?.window.isVisible != true { showCatalog() }
+        return true
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        catalogStorage?.flush()
+    }
+
+    /// Player and preference commands shared by the local HTTP API and the catalogue window.
+    /// Some branches wait on the main thread, so never call this from it.
+    func runNativeCommand(_ command: String, params: [String: String]) -> [String: Any] {
+        // Ghost preference + status work even when no float window is open.
+        switch command {
+        case "ghost", "toggleGhost":
+            var ghostState = false
+            DispatchQueue.main.sync {
+                ghostState = self.toggleGhostPreferringWindow()
+            }
+            return ["success": true, "isGhost": ghostState]
+        case "status":
+            if let win = self.floatWindow {
+                var progress: [String: Any] = [:]
+                DispatchQueue.main.sync { progress = win.progressPayload() }
+                return [
+                    "success": true,
+                    "title": win.videoTitle,
+                    "isPlaying": win.isPlaying,
+                    "isGhost": win.isGhostMode,
+                    "isAIDubEnabled": win.isAIDubbingEnabled,
+                    "dubVoice": EdgeTTSManager.shared.selectedVoice.rawValue,
+                    "dubVoiceName": EdgeTTSManager.shared.selectedVoice.displayName,
+                    "autoNext": FloatWindow.preferredAutoNextEpisode,
+                    "skipIntro": FloatWindow.preferredAutoSkipIntro,
+                    "sizePreset": FloatWindow.savedSizePreset.rawValue,
+                    "opacity": win.alphaValue,
+                    "volume": win.currentVolume,
+                    "width": win.frame.width,
+                    "height": win.frame.height,
+                    "currentTime": win.playbackElapsed,
+                    "duration": win.playbackDuration,
+                    "progress": progress
+                ]
+            }
+            return [
+                "success": true,
+                "title": "",
+                "isPlaying": false,
+                "isGhost": FloatWindow.preferredGhostMode,
+                "isAIDubEnabled": false,
+                "opacity": 1.0,
+                "volume": 1.0,
+                "width": 0,
+                "height": 0,
+                "currentTime": 0,
+                "duration": 0,
+                "progress": [:] as [String: Any]
+            ]
+        default:
+            break
+        }
+
+        guard let win = self.floatWindow else {
+            return ["success": false, "error": "No active window"]
+        }
+        switch command {
+        case "toggle", "togglePlayPause":
+            DispatchQueue.main.async { win.togglePlayPause() }
+            return ["success": true, "isPlaying": win.isPlaying]
+        case "pause":
+            DispatchQueue.main.async { win.pause() }
+            return ["success": true, "paused": true]
+        case "play":
+            DispatchQueue.main.async { win.play() }
+            return ["success": true, "playing": true]
+        case "forward":
+            DispatchQueue.main.async { win.skipForward() }
+            return ["success": true]
+        case "backward":
+            DispatchQueue.main.async { win.skipBackward() }
+            return ["success": true]
+        case "duck":
+            DispatchQueue.main.async { win.duckVolume() }
+            return ["success": true, "ducked": true]
+        case "unduck":
+            DispatchQueue.main.async { win.unduckVolume() }
+            return ["success": true, "ducked": false]
+        case "aidub", "aiDub", "toggleAIDub":
+            var state = false
+            DispatchQueue.main.sync {
+                win.toggleAIDubbing()
+                state = win.isAIDubbingEnabled
+            }
+            return ["success": true, "isAIDubEnabled": state]
+        case "dubVoice", "edgeVoice", "setDubVoice":
+            if let voiceParam = params["voice"] ?? params["val"] {
+                if voiceParam.lowercased().contains("nam") {
+                    EdgeTTSManager.shared.selectedVoice = .namMinh
+                } else {
+                    EdgeTTSManager.shared.selectedVoice = .hoaiMy
+                }
+            }
+            let voice = EdgeTTSManager.shared.selectedVoice
+            DispatchQueue.main.async {
+                win.showHUD("Giọng đọc Edge AI: \(voice.displayName)")
+            }
+            return ["success": true, "voice": voice.rawValue, "name": voice.displayName]
+        case "opacity":
+            if let valStr = params["val"], let val = Double(valStr) {
+                DispatchQueue.main.async { win.setOpacity(val) }
+                return ["success": true, "opacity": val]
+            }
+            return ["success": false, "error": "Missing val parameter"]
+        case "bigger", "grow", "sizeup":
+            var size = NSSize.zero
+            DispatchQueue.main.sync { size = win.adjustWindowScale(by: 1.18) }
+            return ["success": true, "width": size.width, "height": size.height]
+        case "smaller", "shrink", "sizedown":
+            var size = NSSize.zero
+            DispatchQueue.main.sync { size = win.adjustWindowScale(by: 1.0 / 1.18) }
+            return ["success": true, "width": size.width, "height": size.height]
+        case "size", "resize":
+            if let wStr = params["w"] ?? params["width"], let w = Double(wStr) {
+                var size = NSSize.zero
+                DispatchQueue.main.sync { size = win.setWindowWidth(CGFloat(w)) }
+                return ["success": true, "width": size.width, "height": size.height]
+            }
+            if let factorStr = params["factor"] ?? params["scale"], let factor = Double(factorStr), factor > 0 {
+                var size = NSSize.zero
+                DispatchQueue.main.sync { size = win.adjustWindowScale(by: CGFloat(factor)) }
+                return ["success": true, "width": size.width, "height": size.height]
+            }
+            return [
+                "success": true,
+                "width": win.frame.width,
+                "height": win.frame.height
+            ]
+        case "boss":
+            var visible = false
+            DispatchQueue.main.sync {
+                win.toggleBossHide()
+                visible = win.isWindowVisible
+            }
+            return ["success": true, "visible": visible]
+        case "nextEpisode", "next":
+            var ok = false
+            DispatchQueue.main.sync { ok = win.switchEpisode(by: 1) }
+            return ["success": ok]
+        case "prevEpisode", "prev", "previousEpisode":
+            var ok = false
+            DispatchQueue.main.sync { ok = win.switchEpisode(by: -1) }
+            return ["success": ok]
+        case "autoNext", "autonext":
+            if let val = params["val"] ?? params["on"] {
+                let enabled = ["1","true","on","yes"].contains(val.lowercased())
+                DispatchQueue.main.sync {
+                    _ = FloatWindow.setPreferredAutoNextEpisode(enabled)
+                    win.refreshWatchAssistFromAPI()
+                }
+                return ["success": true, "autoNext": enabled]
+            } else {
+                var enabled = false
+                DispatchQueue.main.sync {
+                    win.toggleAutoNextEpisode()
+                    enabled = FloatWindow.preferredAutoNextEpisode
+                }
+                return ["success": true, "autoNext": enabled]
+            }
+        case "skipIntro", "skipintro", "autoSkipIntro":
+            if let val = params["val"] ?? params["on"] {
+                let enabled = ["1","true","on","yes"].contains(val.lowercased())
+                DispatchQueue.main.sync {
+                    _ = FloatWindow.setPreferredAutoSkipIntro(enabled)
+                    win.refreshWatchAssistFromAPI()
+                }
+                return ["success": true, "skipIntro": enabled]
+            } else {
+                var enabled = false
+                DispatchQueue.main.sync {
+                    win.toggleAutoSkipIntro()
+                    enabled = FloatWindow.preferredAutoSkipIntro
+                }
+                return ["success": true, "skipIntro": enabled]
+            }
+        case "skipIntroNow", "skipintronow":
+            DispatchQueue.main.sync { win.manualSkipIntro() }
+            return ["success": true]
+        case "preset", "sizePreset":
+            let name = (params["val"] ?? params["name"] ?? params["id"] ?? "").lowercased()
+            let map: [String: FloatWindow.SizePreset] = [
+                "mini": .mini, "nho": .mini, "small": .mini,
+                "standard": .standard, "vua": .standard, "medium": .standard,
+                "wide": .wide, "rong": .wide,
+                "pocket": .pocket, "lon": .pocket, "max": .pocket
+            ]
+            guard let preset = map[name] else {
+                return ["success": false, "error": "Unknown preset. Use mini|standard|wide|pocket"]
+            }
+            var width: CGFloat = 0
+            DispatchQueue.main.sync {
+                win.applySizePreset(preset)
+                width = win.frame.width
+            }
+            return ["success": true, "preset": preset.rawValue, "width": width]
+        default:
+            return ["success": false, "error": "Unknown command \(command)"]
+        }
+    
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         return false  // Don't quit when window closes
+    }
+
+    /// Validate and open a floating player. Returns an error message, or nil when it opened.
+    func performOpen(_ msg: [String: Any]) -> String? {
+        let url = msg["url"] as? String ?? ""
+        let videoSrc = msg["videoSrc"] as? String ?? ""
+        let embedUrl = msg["embedUrl"] as? String ?? ""
+        // Native messaging must enforce the same document boundary as Chrome.
+        // Direct media may use a CDN, but arbitrary web pages are never opened.
+        let curatedMovieID = FloatWindow.curatedYouTubeMovieID(url)
+        let curatedYouTubeEmbed = msg["site"] as? String == "youtube"
+            && msg["preferEmbed"] as? Bool == true
+            && curatedMovieID != nil
+            && FloatWindow.curatedYouTubeMovieID(embedUrl) == curatedMovieID
+        if !curatedYouTubeEmbed && ((!url.isEmpty && FloatWindow.validateMediaURL(url) == nil
+            && !(url == videoSrc && FloatWindow.isSafeMediaSource(videoSrc)))
+            || (!embedUrl.isEmpty && FloatWindow.validateMediaURL(embedUrl) == nil)) {
+            return "Chỉ được mở các trang xem phim trong danh sách cho phép."
+        }
+        let title = msg["title"] as? String ?? "VibeFloat"
+        let site = msg["site"] as? String ?? "generic"
+        let width = msg["width"] as? CGFloat
+            ?? CGFloat(msg["width"] as? Int ?? 640)
+        let height = msg["height"] as? CGFloat
+            ?? CGFloat(msg["height"] as? Int ?? 360)
+        let currentTime = msg["currentTime"] as? Double ?? 0
+        let movieContext = (msg["movieContext"] as? [String: Any]).flatMap { MovieContext(dict: $0) }
+        let preferEmbed = (msg["preferEmbed"] as? Bool) == true
+            || (msg["preferEmbed"] as? NSNumber)?.boolValue == true
+            || (msg["preferEmbed"] as? String)?.lowercased() == "true"
+        let focusSession = (msg["focusSession"] as? Bool) == true
+            || (msg["focusSession"] as? NSNumber)?.boolValue == true
+            || (msg["focusSession"] as? String)?.lowercased() == "true"
+        let aiDubEnabled = (msg["aiDubEnabled"] as? Bool) == true
+            || (msg["aiDubEnabled"] as? NSNumber)?.boolValue == true
+            || (msg["aiDubEnabled"] as? String)?.lowercased() == "true"
+
+        // Parse cookies
+        var cookies: [[String: Any]] = []
+        if let rawCookies = msg["cookies"] as? [[String: Any]] {
+            cookies = rawCookies
+        }
+
+        openFloatWindow(
+            url: url, videoSrc: videoSrc.isEmpty ? nil : videoSrc,
+            embedUrl: embedUrl.isEmpty ? nil : embedUrl,
+            title: title, width: width, height: height,
+            currentTime: currentTime, site: site,
+            cookies: cookies,
+            playerPrefs: msg["playerPrefs"] as? [String: Any],
+            movieContext: movieContext,
+            preferEmbed: preferEmbed,
+            focusSession: focusSession,
+            aiDubEnabled: aiDubEnabled
+        )
+        return nil
     }
 
     func handleMessage(_ msg: [String: Any]) {
@@ -249,66 +327,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
 
         switch action {
         case "open":
-            let url = msg["url"] as? String ?? ""
-            let videoSrc = msg["videoSrc"] as? String ?? ""
-            let embedUrl = msg["embedUrl"] as? String ?? ""
-            // Native messaging must enforce the same document boundary as Chrome.
-            // Direct media may use a CDN, but arbitrary web pages are never opened.
-            let curatedMovieID = FloatWindow.curatedYouTubeMovieID(url)
-            let curatedYouTubeEmbed = msg["site"] as? String == "youtube"
-                && msg["preferEmbed"] as? Bool == true
-                && curatedMovieID != nil
-                && FloatWindow.curatedYouTubeMovieID(embedUrl) == curatedMovieID
-            if !curatedYouTubeEmbed && ((!url.isEmpty && FloatWindow.validateMediaURL(url) == nil
-                && !(url == videoSrc && FloatWindow.isSafeMediaSource(videoSrc)))
-                || (!embedUrl.isEmpty && FloatWindow.validateMediaURL(embedUrl) == nil)) {
-                messageHandler?.sendMessage([
-                    "type": "error",
-                    "error": "Chỉ được mở các trang xem phim trong danh sách cho phép."
-                ])
+            if let error = performOpen(msg) {
+                messageHandler?.sendMessage(["type": "error", "error": error])
                 return
             }
-            let title = msg["title"] as? String ?? "VibeFloat"
-            let site = msg["site"] as? String ?? "generic"
-            let width = msg["width"] as? CGFloat
-                ?? CGFloat(msg["width"] as? Int ?? 640)
-            let height = msg["height"] as? CGFloat
-                ?? CGFloat(msg["height"] as? Int ?? 360)
-            let currentTime = msg["currentTime"] as? Double ?? 0
-            let movieContext = (msg["movieContext"] as? [String: Any]).flatMap { MovieContext(dict: $0) }
-            let preferEmbed = (msg["preferEmbed"] as? Bool) == true
-                || (msg["preferEmbed"] as? NSNumber)?.boolValue == true
-                || (msg["preferEmbed"] as? String)?.lowercased() == "true"
-            let focusSession = (msg["focusSession"] as? Bool) == true
-                || (msg["focusSession"] as? NSNumber)?.boolValue == true
-                || (msg["focusSession"] as? String)?.lowercased() == "true"
-            let aiDubEnabled = (msg["aiDubEnabled"] as? Bool) == true
-                || (msg["aiDubEnabled"] as? NSNumber)?.boolValue == true
-                || (msg["aiDubEnabled"] as? String)?.lowercased() == "true"
-
-            // Parse cookies
-            var cookies: [[String: Any]] = []
-            if let rawCookies = msg["cookies"] as? [[String: Any]] {
-                cookies = rawCookies
-            }
-
-            openFloatWindow(
-                url: url, videoSrc: videoSrc.isEmpty ? nil : videoSrc,
-                embedUrl: embedUrl.isEmpty ? nil : embedUrl,
-                title: title, width: width, height: height,
-                currentTime: currentTime, site: site,
-                cookies: cookies,
-                playerPrefs: msg["playerPrefs"] as? [String: Any],
-                movieContext: movieContext,
-                preferEmbed: preferEmbed,
-                focusSession: focusSession,
-                aiDubEnabled: aiDubEnabled
-            )
-
             messageHandler?.sendMessage([
                 "type": "status",
                 "status": "opened",
-                "title": title,
+                "title": msg["title"] as? String ?? "VibeFloat",
                 "isGhost": currentGhostState(),
                 "isAIDubEnabled": floatWindow?.isAIDubbingEnabled ?? false
             ])
@@ -578,6 +604,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
 
         floatWindow?.onProgress = { [weak self] payload in
             self?.messageHandler?.sendMessage(payload)
+            // Standalone: "Tiếp tục xem" is saved here, so it works with the window closed.
+            if let self = self, let storage = self.catalogStorage {
+                CatalogProgress.apply(payload, to: storage)
+                self.tellCatalog(payload)
+            }
         }
 
         floatWindow?.onClose = { [weak self] in
@@ -589,6 +620,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, AVAudioPlayerDelegate {
                 "type": "status",
                 "status": "closed"
             ])
+            self?.tellCatalog(["type": "NATIVE_STATUS_BROADCAST", "connected": true, "isGhost": self?.currentGhostState() ?? false])
         }
 
         floatWindow?.show()

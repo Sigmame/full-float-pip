@@ -6,6 +6,7 @@ let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 
-// Run as accessory (no Dock icon)
+// Chrome's native-messaging host stays an accessory (no Dock icon). Standalone launches
+// switch to a regular app in AppDelegate.startStandalone().
 app.setActivationPolicy(.accessory)
 app.run()
