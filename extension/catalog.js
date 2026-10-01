@@ -17,6 +17,10 @@ let heroRotationTimer = null;
 let isHeroHovered = false;
 let homeRailResizeObserver = null;
 let favSlugSet = new Set();
+let watchedSlugSet = new Set();   // movies the reader marked as watched
+let hiddenSlugSet = new Set();    // movies the reader hid ("not interested"): shown nowhere but the Hidden list
+const cardItems = new Map();      // slug -> the item last drawn as a card, so a mark can remember it
+const PERSONAL_LISTS = ['favorites', 'watched', 'hidden'];
 let suggestActiveIdx = -1;
 let activeDialog = null;
 let dialogReturnFocus = null;
@@ -53,11 +57,14 @@ function setOptionalText(id, value) {
 const PLAY_ICON_SVG = `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><polygon points="6,4 20,12 6,20"/></svg>`;
 const LIST_ICON_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>`;
 const LIST_CHECK_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>`;
+const MORE_BTN_SVG = `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>`;
+const WATCHED_BADGE_HTML = '<span class="card-watched-badge">✓ Đã xem</span>';
 const INFO_BTN_SVG = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`;
 
 document.addEventListener('DOMContentLoaded', async () => {
     if (typeof MovieImages !== 'undefined') MovieImages.install(document);
     favSlugSet = await MovieService.getFavoriteSlugSet();
+    await refreshMarkSets();
     initUI();
     loadContinueWatching();
     navigateView();
@@ -65,6 +72,26 @@ document.addEventListener('DOMContentLoaded', async () => {
 
 async function refreshFavSet() {
     favSlugSet = await MovieService.getFavoriteSlugSet();
+}
+
+async function refreshMarkSets() {
+    [watchedSlugSet, hiddenSlugSet] = await Promise.all([MovieService.getWatchedSlugSet(), MovieService.getHiddenSlugSet()]);
+}
+
+/**
+ * Home data without the hidden movies: rows lose them (and disappear when empty), the billboard
+ * loses them, and the Top 10 is numbered again. Returns a copy; cached data is never changed.
+ */
+function dropHiddenFromHome(data, hidden) {
+    if (!data || !hidden || !hidden.size) return data;
+    const keep = list => (list || []).filter(movie => !movie || !hidden.has(movie.slug));
+    const sections = (data.sections || []).map(section => {
+        let items = keep(section.items);
+        if (section.isTop10) items = items.map((movie, index) => ({ ...movie, rank: index + 1 }));
+        return { ...section, items };
+    }).filter(section => section.items.length);
+    const spotlights = keep(data.spotlights);
+    return { ...data, spotlights, spotlight: spotlights[0] || null, sections };
 }
 
 function setListButtonState(btn, inList) {
@@ -108,7 +135,7 @@ function navigateView() {
         gridView?.classList.remove('hidden');
         heroSpotlight?.classList.add('hidden');
 
-        if (currentCategory === 'favorites') {
+        if (PERSONAL_LISTS.includes(currentCategory)) {
             loadFavorites();
         } else {
             loadMovies();
@@ -117,7 +144,425 @@ function navigateView() {
 }
 
 // MARK: - UI Initialization
+// MARK: - Watched / hidden marks
+
+const cardSelector = slug => `.movie-card[data-slug="${CSS.escape(slug)}"]`;
+
+/** The item behind a card (what a mark must remember), rebuilt from the card if it was never recorded. */
+function itemForCard(card) {
+    const slug = card.dataset.slug;
+    return cardItems.get(slug) || {
+        slug,
+        name: card.querySelector('.movie-title')?.textContent || slug,
+        poster: card.querySelector('.movie-poster')?.src || '',
+        source: card.dataset.source || currentSource
+    };
+}
+
+function syncWatchedCards(slug) {
+    const on = watchedSlugSet.has(slug);
+    document.querySelectorAll(cardSelector(slug)).forEach(card => {
+        card.classList.toggle('is-watched', on);
+        const badge = card.querySelector('.card-watched-badge');
+        if (on && !badge) card.querySelector('.movie-poster-wrap')?.insertAdjacentHTML('beforeend', WATCHED_BADGE_HTML);
+        else if (!on && badge) badge.remove();
+    });
+}
+
+/** Take every card of a movie off the page, keep focus nearby, and tidy rows and counts. */
+function removeCardsFor(slug) {
+    document.querySelectorAll(cardSelector(slug)).forEach(card => {
+        const heir = [card.nextElementSibling, card.previousElementSibling].find(el => el?.classList?.contains('movie-card'));
+        const hadFocus = document.activeElement === card;
+        const group = card.parentElement;
+        card.classList.add('is-leaving');
+        setTimeout(() => {
+            card.remove();
+            if (hadFocus) heir?.focus({ preventScroll: true });
+            if (group) {
+                ensureRovingTab(group);
+                if (group.classList.contains('home-section-rail') && !group.querySelector('.movie-card')) group.closest('.home-section')?.remove();
+            }
+            const grid = document.getElementById('movie-grid');
+            const countEl = document.getElementById('result-count');
+            if (grid && countEl && group === grid) {
+                const left = grid.querySelectorAll('.movie-card').length;
+                countEl.textContent = left ? `${left} phim` : '';
+                if (!left && feed?.done) showGridMessage(grid, feedEmptyMessage());
+            }
+        }, 220);
+    });
+}
+
+/** The billboard must not keep showing a movie that was just hidden. */
+function dropHiddenSpotlight(slug) {
+    if (!heroSpotlights.some(spot => spot.slug === slug)) return;
+    const remaining = heroSpotlights.filter(spot => spot.slug !== slug);
+    if (!remaining.length) {
+        stopHeroRotation();
+        document.getElementById('hero-spotlight')?.classList.add('hidden');
+        return;
+    }
+    startHeroRotation(remaining);
+}
+
+function syncModalMarks() {
+    const movie = currentMovie;
+    const watchedBtn = document.getElementById('modal-watched-btn');
+    const hideBtn = document.getElementById('modal-hide-btn');
+    if (!movie) return;
+    if (watchedBtn) {
+        const on = watchedSlugSet.has(movie.slug);
+        watchedBtn.setAttribute('aria-pressed', on ? 'true' : 'false');
+        watchedBtn.textContent = on ? '✓ Đã xem' : 'Đánh dấu đã xem';
+    }
+    if (hideBtn) hideBtn.textContent = hiddenSlugSet.has(movie.slug) ? 'Bỏ ẩn' : 'Ẩn phim';
+}
+
+async function toggleWatched(item) {
+    const turnOn = !watchedSlugSet.has(item.slug);
+    await MovieService.setWatched(item, turnOn);
+    if (turnOn) watchedSlugSet.add(item.slug); else watchedSlugSet.delete(item.slug);
+    syncWatchedCards(item.slug);
+    if (!turnOn && currentCategory === 'watched') removeCardsFor(item.slug);
+    syncModalMarks();
+    showToast(turnOn ? `Đã đánh dấu “${item.name}” là đã xem` : `Đã bỏ đánh dấu đã xem “${item.name}”`,
+        { label: 'Hoàn tác', run: () => toggleWatched(item) });
+}
+
+async function hideMovie(item) {
+    await MovieService.setHidden(item, true);
+    hiddenSlugSet.add(item.slug);
+    removeCardsFor(item.slug);
+    dropHiddenSpotlight(item.slug);
+    syncModalMarks();
+    showToast(`Đã ẩn “${item.name}”. Xem lại ở mục “Đã ẩn”.`, { label: 'Hoàn tác', run: () => unhideMovie(item, { restore: true }) });
+}
+
+async function unhideMovie(item, { restore = false } = {}) {
+    await MovieService.setHidden(item, false);
+    hiddenSlugSet.delete(item.slug);
+    if (currentCategory === 'hidden') removeCardsFor(item.slug);
+    else if (restore) navigateView();   // draw it again where it was
+    syncModalMarks();
+    showToast(`Đã bỏ ẩn “${item.name}”`);
+}
+
+// The options menu: opened from the ⋯ button, the right mouse button or the keyboard's menu key.
+let cardMenu = null;
+
+function closeCardMenu({ restoreFocus = true } = {}) {
+    if (!cardMenu) return;
+    const { element, card } = cardMenu;
+    cardMenu = null;
+    element.remove();
+    if (restoreFocus && card?.isConnected) card.focus({ preventScroll: true });
+}
+
+function openCardMenu(card, anchor) {
+    closeCardMenu({ restoreFocus: false });
+    const item = itemForCard(card);
+    const watched = watchedSlugSet.has(item.slug);
+    const listed = favSlugSet.has(item.slug);
+    const hidden = hiddenSlugSet.has(item.slug);
+    const entries = [
+        { label: watched ? 'Bỏ đánh dấu đã xem' : 'Đánh dấu là đã xem', run: () => toggleWatched(item) },
+        { label: listed ? 'Bỏ khỏi danh sách của tôi' : 'Thêm vào danh sách của tôi', run: () => card.querySelector('.card-mylist-btn')?.click() },
+        { label: 'Xem chi tiết', run: () => openMovieDetail(item.slug, item.source || currentSource) },
+        'separator',
+        hidden
+            ? { label: 'Bỏ ẩn phim này', run: () => unhideMovie(item) }
+            : { label: 'Ẩn phim này (không quan tâm)', danger: true, run: () => hideMovie(item) }
+    ];
+
+    const menu = document.createElement('div');
+    menu.className = 'card-menu';
+    menu.setAttribute('role', 'menu');
+    menu.setAttribute('aria-label', `Tùy chọn cho ${item.name}`);
+    entries.forEach(entry => {
+        if (entry === 'separator') {
+            const line = document.createElement('div');
+            line.className = 'card-menu-separator';
+            line.setAttribute('role', 'separator');
+            menu.appendChild(line);
+            return;
+        }
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.setAttribute('role', 'menuitem');
+        button.className = `card-menu-item${entry.danger ? ' is-danger' : ''}`;
+        button.textContent = entry.label;
+        button.addEventListener('click', () => { closeCardMenu({ restoreFocus: false }); entry.run(); });
+        menu.appendChild(button);
+    });
+    document.body.appendChild(menu);
+
+    // Beside the pointer or the button, kept inside the window.
+    const box = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : null;
+    const wantedX = box ? box.left : anchor.x;
+    const wantedY = box ? box.bottom + 4 : anchor.y;
+    const left = Math.max(8, Math.min(wantedX, window.innerWidth - menu.offsetWidth - 8));
+    const top = Math.max(8, Math.min(wantedY, window.innerHeight - menu.offsetHeight - 8));
+    menu.style.left = `${left}px`;
+    menu.style.top = `${top}px`;
+
+    const items = [...menu.querySelectorAll('[role="menuitem"]')];
+    menu.addEventListener('keydown', event => {
+        const index = items.indexOf(document.activeElement);
+        const move = target => { event.preventDefault(); items[(target + items.length) % items.length].focus(); };
+        if (event.key === 'ArrowDown') move(index + 1);
+        else if (event.key === 'ArrowUp') move(index - 1);
+        else if (event.key === 'Home') move(0);
+        else if (event.key === 'End') move(items.length - 1);
+        else if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeCardMenu(); }
+        else if (event.key === 'Tab') { event.preventDefault(); closeCardMenu(); }
+    });
+    cardMenu = { element: menu, card };
+    items[0].focus();
+}
+
+function installCardMenuDismissal() {
+    // Any click elsewhere, scrolling, resizing or losing the window closes the menu.
+    document.addEventListener('pointerdown', event => {
+        if (cardMenu && !cardMenu.element.contains(event.target)) closeCardMenu({ restoreFocus: false });
+    }, true);
+    window.addEventListener('scroll', () => closeCardMenu({ restoreFocus: false }), { passive: true, capture: true });
+    window.addEventListener('resize', () => closeCardMenu({ restoreFocus: false }));
+    window.addEventListener('blur', () => closeCardMenu({ restoreFocus: false }));
+}
+
+// MARK: - Keyboard navigation between cards
+
+/**
+ * The card to move to for an arrow key, like a TV remote: left/right walk the row (a rail or
+ * the grid in reading order), up/down jump to the nearest row above or below and land on the
+ * card closest in horizontal position. Home/End go to the ends of the row.
+ */
+function pickNeighbourCard(current, key, cards) {
+    const row = cards.filter(card => card.parentElement === current.parentElement);
+    const index = row.indexOf(current);
+    if (key === 'ArrowRight') return row[index + 1] || null;
+    if (key === 'ArrowLeft') return row[index - 1] || null;
+    if (key === 'Home') return row[0] !== current ? row[0] : null;
+    if (key === 'End') return row[row.length - 1] !== current ? row[row.length - 1] : null;
+    const rect = current.getBoundingClientRect();
+    const centreX = rect.left + rect.width / 2;
+    const centreY = rect.top + rect.height / 2;
+    const direction = key === 'ArrowDown' ? 1 : -1;
+    const others = cards.filter(card => card !== current).map(card => {
+        const box = card.getBoundingClientRect();
+        return { card, away: (box.top + box.height / 2 - centreY) * direction, offset: Math.abs(box.left + box.width / 2 - centreX) };
+    }).filter(entry => entry.away > rect.height / 2);
+    if (!others.length) return null;
+    const nearest = Math.min(...others.map(entry => entry.away));
+    // Cards in the same visual row differ by far less than half a card height.
+    const sameRow = others.filter(entry => entry.away - nearest < rect.height / 2);
+    sameRow.sort((a, b) => a.offset - b.offset);
+    return sameRow[0].card;
+}
+
+/** One Tab stop per rail or grid; the arrow keys move within it. */
+function ensureRovingTab(root) {
+    if (!root) return;
+    const groups = root.matches?.('.home-section-rail, #movie-grid') ? [root] : [...root.querySelectorAll('.home-section-rail, #movie-grid')];
+    groups.forEach(group => {
+        const cards = [...group.querySelectorAll(':scope > .movie-card')];
+        if (!cards.length) return;
+        const stop = cards.find(card => card.getAttribute('tabindex') === '0') || cards[0];
+        cards.forEach(card => card.setAttribute('tabindex', card === stop ? '0' : '-1'));
+    });
+}
+
+function installCardKeyboardNav() {
+    const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+    document.addEventListener('keydown', event => {
+        if (!keys.includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || activeDialog) return;
+        const current = document.activeElement;
+        if (!current || !current.classList?.contains('movie-card')) return;
+        const cards = [...document.querySelectorAll('#home-view:not(.hidden) .movie-card, #grid-view:not(.hidden) .movie-card')];
+        const next = pickNeighbourCard(current, event.key, cards);
+        if (!next) return;
+        event.preventDefault();
+        next.focus({ preventScroll: true });
+        next.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    });
+    // Whatever card the reader lands on (arrow, click or Tab) becomes its row's Tab stop.
+    document.addEventListener('focusin', event => {
+        const card = event.target;
+        if (!card.classList?.contains('movie-card') || !card.parentElement) return;
+        card.parentElement.querySelectorAll(':scope > .movie-card[tabindex="0"]').forEach(other => {
+            if (other !== card) other.setAttribute('tabindex', '-1');
+        });
+        card.setAttribute('tabindex', '0');
+    });
+}
+
+// MARK: - Hover preview (the card grows into a small preview, like a streaming home screen)
+
+const PREVIEW_DWELL_MS = 450;
+const PREVIEW_SWITCH_MS = 140;
+const previewDetails = new Map();   // "source:slug" -> detail promise, so each title is fetched once
+
+/** Where the preview goes: centred on the card, kept inside the window and below the header. */
+function placePreview(card, view, height, headerHeight = 70) {
+    const margin = 12;
+    const width = Math.round(Math.min(Math.max(card.width * 1.35, 300), 360));
+    const left = Math.round(Math.max(margin, Math.min(card.left + card.width / 2 - width / 2, view.width - width - margin)));
+    const wanted = card.top - 24;
+    const top = Math.round(Math.max(headerHeight, Math.min(wanted, view.height - height - margin)));
+    return { left, top, width };
+}
+
+function previewDetail(slug, source) {
+    const key = `${source}:${slug}`;
+    if (!previewDetails.has(key)) {
+        previewDetails.set(key, MovieService.getDetail(slug, source).catch(() => null));
+        if (previewDetails.size > 60) previewDetails.delete(previewDetails.keys().next().value);
+    }
+    return previewDetails.get(key);
+}
+
+function installHoverPreview() {
+    const canHover = () => window.matchMedia('(hover: hover) and (pointer: fine)').matches && window.innerWidth >= 900;
+    let panel = null, current = null, timer = null, leaveTimer = null, token = 0;
+
+    const build = () => {
+        panel = document.createElement('div');
+        panel.id = 'hover-preview';
+        panel.className = 'hover-preview';
+        // A pointer-only extra: everything it does is also on the card itself, so it stays out of the tab order.
+        panel.setAttribute('aria-hidden', 'true');
+        panel.innerHTML = `
+            <div class="hp-media"><img class="hp-img" alt="" referrerpolicy="no-referrer"><div class="card-badges-top hp-badges"></div><span class="hp-ep" hidden></span></div>
+            <div class="hp-body">
+                <div class="hp-actions">
+                    <button type="button" class="hp-btn hp-play" tabindex="-1">${PLAY_ICON_SVG}</button>
+                    <button type="button" class="hp-btn hp-list" tabindex="-1"></button>
+                    <button type="button" class="hp-btn hp-info" tabindex="-1">${INFO_BTN_SVG}</button>
+                </div>
+                <div class="hp-title"></div>
+                <div class="hp-origin"></div>
+                <div class="hp-meta"></div>
+                <div class="hp-genres"></div>
+                <p class="hp-desc"></p>
+            </div>`;
+        document.body.appendChild(panel);
+        panel.addEventListener('mouseenter', () => clearTimeout(leaveTimer));
+        panel.addEventListener('mouseleave', () => scheduleHide());
+        panel.addEventListener('click', event => {
+            if (!current) return;
+            const card = current;
+            const press = selector => card.querySelector(selector)?.click();
+            if (event.target.closest('.hp-play')) { hide(); press('.card-quick-float'); }
+            else if (event.target.closest('.hp-list')) { press('.card-mylist-btn'); syncList(card); }
+            else { hide(); press('.card-info-btn'); }
+        });
+        window.addEventListener('scroll', hide, { passive: true, capture: true });
+        window.addEventListener('blur', hide);
+        document.addEventListener('keydown', hide);
+    };
+
+    const syncList = card => {
+        const listed = card.querySelector('.card-mylist-btn')?.classList.contains('is-listed');
+        const button = panel.querySelector('.hp-list');
+        button.innerHTML = listed ? LIST_CHECK_SVG : LIST_ICON_SVG;
+        button.classList.toggle('is-listed', !!listed);
+        button.setAttribute('title', listed ? 'Bỏ khỏi danh sách' : 'Thêm vào danh sách');
+    };
+
+    const fill = (card) => {
+        const text = selector => card.querySelector(selector)?.textContent.trim() || '';
+        const image = card.querySelector('img.movie-poster');
+        panel.querySelector('.hp-img').src = image ? (image.currentSrc || image.src) : '';
+        panel.querySelector('.hp-badges').innerHTML = card.querySelector('.card-badges-top')?.innerHTML || '';
+        const episode = text('.card-ep-badge');
+        const episodeEl = panel.querySelector('.hp-ep');
+        episodeEl.hidden = !episode;
+        episodeEl.textContent = episode;
+        panel.querySelector('.hp-title').textContent = text('.movie-title');
+        panel.querySelector('.hp-origin').textContent = text('.movie-origin');
+        const meta = [];
+        const rating = text('.card-badge-rating');
+        if (rating) meta.push(`<span class="hp-rating">★ ${escapeHtml(rating)}</span>`);
+        const year = text('.movie-footer span');
+        if (year) meta.push(`<span>${escapeHtml(year.replace(/^Năm\s*/, ''))}</span>`);
+        const quality = text('.card-hd');
+        if (quality) meta.push(`<span class="hp-quality">${escapeHtml(quality)}</span>`);
+        panel.querySelector('.hp-meta').innerHTML = meta.join('');
+        panel.querySelector('.hp-genres').textContent = '';
+        panel.querySelector('.hp-desc').textContent = '';
+        panel.querySelector('.hp-desc').classList.add('hp-loading');
+        panel.querySelector('.hp-play').setAttribute('title', 'Phát nổi');
+        panel.querySelector('.hp-info').setAttribute('title', 'Chi tiết phim');
+        syncList(card);
+    };
+
+    const place = card => {
+        const rect = card.getBoundingClientRect();
+        const spot = placePreview(rect, { width: window.innerWidth, height: window.innerHeight }, panel.offsetHeight || 340,
+            document.querySelector('.navbar')?.getBoundingClientRect().bottom || 70);
+        panel.style.width = `${spot.width}px`;
+        panel.style.left = `${spot.left}px`;
+        panel.style.top = `${spot.top}px`;
+        const height = panel.offsetHeight;
+        const again = placePreview(rect, { width: window.innerWidth, height: window.innerHeight }, height,
+            document.querySelector('.navbar')?.getBoundingClientRect().bottom || 70);
+        panel.style.top = `${again.top}px`;
+        panel.style.transformOrigin = `${Math.round(rect.left + rect.width / 2 - again.left)}px ${Math.round(rect.top + rect.height / 2 - again.top)}px`;
+    };
+
+    const show = async card => {
+        if (!canHover() || activeDialog || !card.isConnected) return;
+        if (!panel) build();
+        current = card;
+        const mine = ++token;
+        fill(card);
+        panel.classList.remove('is-open');
+        place(card);
+        requestAnimationFrame(() => { if (mine === token) panel.classList.add('is-open'); });
+
+        const detail = await previewDetail(card.dataset.slug, card.dataset.source || currentSource);
+        if (mine !== token || !detail) { if (mine === token) panel.querySelector('.hp-desc').classList.remove('hp-loading'); return; }
+        const description = (detail.description || '').slice(0, 220);
+        panel.querySelector('.hp-desc').textContent = description + (detail.description && detail.description.length > 220 ? '…' : '');
+        panel.querySelector('.hp-desc').classList.remove('hp-loading');
+        panel.querySelector('.hp-genres').textContent = (detail.genres || []).slice(0, 3).join(' • ');
+        if (detail.time) panel.querySelector('.hp-meta').insertAdjacentHTML('beforeend', `<span>${escapeHtml(detail.time)}</span>`);
+        if (detail.thumb) MovieImages.apply(panel.querySelector('.hp-img'), detail, 'wide');
+        place(card);
+    };
+
+    function hide() {
+        clearTimeout(timer);
+        clearTimeout(leaveTimer);
+        token++;
+        current = null;
+        panel?.classList.remove('is-open');
+    }
+    const scheduleHide = () => { clearTimeout(leaveTimer); leaveTimer = setTimeout(hide, 120); };
+
+    document.addEventListener('mouseover', event => {
+        const card = event.target.closest?.('.movie-card');
+        if (!card || card === current) { if (current && event.target.closest?.('.movie-card') === current) clearTimeout(leaveTimer); return; }
+        if (card.closest('#hover-preview')) return;
+        clearTimeout(timer);
+        clearTimeout(leaveTimer);
+        timer = setTimeout(() => show(card), panel?.classList.contains('is-open') ? PREVIEW_SWITCH_MS : PREVIEW_DWELL_MS);
+    });
+    document.addEventListener('mouseout', event => {
+        const card = event.target.closest?.('.movie-card');
+        if (!card) return;
+        const to = event.relatedTarget;
+        if (to && (card.contains(to) || to.closest?.('#hover-preview'))) return;
+        clearTimeout(timer);
+        if (card === current) scheduleHide();
+    });
+}
+
 function initUI() {
+    installCardKeyboardNav();
+    installCardMenuDismissal();
+    installHoverPreview();
     const mobileMenuBtn = document.getElementById('mobile-menu-btn');
     const closeMobileMenu = () => {
         document.body.classList.remove('mobile-menu-open');
@@ -482,7 +927,7 @@ function initUI() {
             e.currentTarget.setAttribute('aria-pressed', 'true');
             currentAudioFilter = e.currentTarget.dataset.filter || 'all';
 
-            if (currentCategory === 'favorites') {
+            if (PERSONAL_LISTS.includes(currentCategory)) {
                 loadFavorites();
             } else if (currentSearchKeyword) {
                 searchMovies(currentSearchKeyword);
@@ -757,7 +1202,7 @@ function renderHomeSections(container, homeData) {
 
                 <div class="home-section-rail-wrap">
                     <button class="rail-nav-btn rail-prev" data-target="rail-${secIdx}" type="button" aria-label="Cuộn trái mục ${escapeAttr(sec.title)}">‹</button>
-                    <div id="rail-${secIdx}" class="${railClass}" role="region" aria-label="${escapeAttr(sec.title)}" tabindex="0">
+                    <div id="rail-${secIdx}" class="${railClass}" role="region" aria-label="${escapeAttr(sec.title)}">
                         ${renderMovieCardsHtml(sec.items, { isTop10: !!sec.isTop10, isRail: true })}
                     </div>
                     <button class="rail-nav-btn rail-next" data-target="rail-${secIdx}" type="button" aria-label="Cuộn phải mục ${escapeAttr(sec.title)}">›</button>
@@ -826,6 +1271,7 @@ function renderHomeSections(container, homeData) {
 
     // Bind Card Clicks
     bindCardClicks(container);
+    ensureRovingTab(container);
     return true;
 }
 
@@ -863,8 +1309,9 @@ async function loadHomePage() {
 
     let shownSignature = null;
     if (cached) {
-        await refreshFavSet();
+        await Promise.all([refreshFavSet(), refreshMarkSets()]);
         if (seq !== homeLoadSeq) return;
+        cached = dropHiddenFromHome(cached, hiddenSlugSet);
         applyHomeHero(cached);
         if (renderHomeSections(container, cached)) shownSignature = MovieService.homeSignature(cached);
         else cached = null;
@@ -875,18 +1322,20 @@ async function loadHomePage() {
     }
 
     try {
-        await refreshFavSet();
+        await Promise.all([refreshFavSet(), refreshMarkSets()]);
         if (seq !== homeLoadSeq) return;
         let earlyHeroSlug = null;
-        const homeData = await MovieService.getHomeSections(source, {
+        let homeData = await MovieService.getHomeSections(source, {
             // Without a cache, show the billboard as soon as it is ready instead of waiting for every row.
-            onSpotlights: early => {
+            onSpotlights: earlyAll => {
+                const early = earlyAll.filter(movie => !hiddenSlugSet.has(movie.slug));
                 if (cached || seq !== homeLoadSeq || !early.length) return;
                 startHeroRotation(early);
                 earlyHeroSlug = early[0].slug;
             }
         });
         if (seq !== homeLoadSeq) return;
+        homeData = dropHiddenFromHome(homeData, hiddenSlugSet);
 
         if (cached) {
             // Same titles as the cached page: leave it alone. The reader may be mid-scroll on a
@@ -923,7 +1372,11 @@ function renderMovieCardsHtml(items, opts = {}) {
         return '<div style="color: var(--text-muted); font-size: 13px; padding: 24px;">Không có phim trong mục này.</div>';
     }
 
-    return items.map(item => {
+    const list = opts.includeHidden ? items : items.filter(item => !hiddenSlugSet.has(item.slug));
+    return list.map(item => {
+        cardItems.set(item.slug, item);
+        if (cardItems.size > 2000) cardItems.delete(cardItems.keys().next().value);
+        const watched = watchedSlugSet.has(item.slug);
         const badges = [];
         if (item.isChieuRap) {
             badges.push('<span class="card-badge badge-rap">RẠP</span>');
@@ -946,16 +1399,17 @@ function renderMovieCardsHtml(items, opts = {}) {
             : '';
         const inList = favSlugSet.has(item.slug);
         const imageKind = opts.isRail || currentViewMode === 'view-cinema' ? 'wide' : 'poster';
-        const cardClass = `movie-card${opts.isRail ? ' movie-card-rail' : ''}${opts.isTop10 ? ' movie-card-top10' : ''}`;
+        const cardClass = `movie-card${opts.isRail ? ' movie-card-rail' : ''}${opts.isTop10 ? ' movie-card-top10' : ''}${watched ? ' is-watched' : ''}`;
 
         return `
-            <div class="${cardClass}" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" role="group" aria-label="${escapeAttr(item.name)}" tabindex="0">
+            <div class="${cardClass}" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" role="group" aria-label="${escapeAttr(item.name)}" tabindex="-1">
                 <div class="movie-poster-wrap">
                     ${rankHtml}
                     <img class="movie-poster" loading="lazy" ${MovieImages.attr(item, imageKind)} alt="" width="320" height="180">
                     <div class="card-badges-top">${badges.join('')}</div>
                     ${ratingBadge}
                     ${epBadge}
+                    ${watched ? WATCHED_BADGE_HTML : ''}
                     <div class="card-hover-actions">
                         <button type="button" class="card-action-btn card-quick-float" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" title="Phát nổi — Tập sau tự động / Bỏ qua GT trong PiP" aria-label="Phát nổi ${escapeAttr(item.name)}">
                             ${PLAY_ICON_SVG}<span>Phát nổi</span>
@@ -965,6 +1419,9 @@ function renderMovieCardsHtml(items, opts = {}) {
                         </button>
                         <button type="button" class="card-action-btn card-info-btn" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" title="Chi tiết phim" aria-label="Xem chi tiết ${escapeAttr(item.name)}">
                             ${INFO_BTN_SVG}
+                        </button>
+                        <button type="button" class="card-action-btn card-more-btn" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" title="Thêm tùy chọn" aria-label="Tùy chọn cho ${escapeAttr(item.name)}" aria-haspopup="menu">
+                            ${MORE_BTN_SVG}
                         </button>
                     </div>
                 </div>
@@ -1055,16 +1512,35 @@ function bindCardClicks(container) {
         });
     });
 
+    container.querySelectorAll('.card-more-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            openCardMenu(btn.closest('.movie-card'), btn);
+        });
+    });
+
     container.querySelectorAll('.movie-card').forEach(card => {
+        card.addEventListener('contextmenu', (event) => {
+            event.preventDefault();
+            openCardMenu(card, { x: event.clientX, y: event.clientY });
+        });
         card.addEventListener('click', () => {
             const slug = card.dataset.slug;
             const source = card.dataset.source || currentSource;
             openMovieDetail(slug, source);
         });
         card.addEventListener('keydown', (event) => {
-            if (event.target !== card || !['Enter', ' '].includes(event.key)) return;
-            event.preventDefault();
-            openMovieDetail(card.dataset.slug, card.dataset.source || currentSource);
+            if (event.target !== card || event.metaKey || event.ctrlKey || event.altKey) return;
+            if (['Enter', ' '].includes(event.key)) {
+                event.preventDefault();
+                openMovieDetail(card.dataset.slug, card.dataset.source || currentSource);
+            } else if (event.key === 'w' || event.key === 'W') {
+                event.preventDefault();
+                toggleWatched(itemForCard(card));
+            } else if ((event.key === 'h' || event.key === 'H') && currentCategory !== 'hidden') {
+                event.preventDefault();
+                hideMovie(itemForCard(card));
+            }
         });
     });
 }
@@ -1376,7 +1852,7 @@ async function loadContinueWatching() {
             ? `<div class="continue-progress"><div class="continue-progress-bar" style="width:${pct}%"></div></div>`
             : '';
         return `
-        <div class="continue-card" data-idx="${idx}" title="Phát nổi tiếp — ${escapeAttr(item.name)}">
+        <div class="continue-card" data-idx="${idx}" role="button" tabindex="0" aria-label="Phát tiếp ${escapeAttr(item.name)}, ${escapeAttr(item.epName || 'Tập 1')}" title="Phát nổi tiếp — ${escapeAttr(item.name)}">
             <div class="continue-thumb-wrap">
                 <img class="continue-thumb" loading="lazy" ${MovieImages.attr(item, 'wide')} width="280" height="158" alt="">
                 <button type="button" class="continue-play-overlay" title="Phát tiếp" aria-label="Phát tiếp ${escapeAttr(item.name)}">
@@ -1412,6 +1888,11 @@ async function loadContinueWatching() {
 
         card.addEventListener('click', (e) => {
             if (e.target.closest('.continue-delete-btn')) return;
+            handleCardAction();
+        });
+        card.addEventListener('keydown', (e) => {
+            if (e.target !== card || !['Enter', ' '].includes(e.key)) return;
+            e.preventDefault();
             handleCardAction();
         });
     });
@@ -1554,7 +2035,9 @@ const CATEGORY_TITLES = {
     'hoathinh': 'Anime',
     'tvshows': 'TV Shows',
     'livetv': 'Truyền hình & luồng trực tiếp',
-    'favorites': 'Danh sách của tôi'
+    'favorites': 'Danh sách của tôi',
+    'watched': 'Phim đã xem',
+    'hidden': 'Phim đã ẩn'
 };
 
 function isDubbedSource() {
@@ -1572,14 +2055,14 @@ function filterLabel(list, slug, fallback) {
 
 function feedKeyFor() {
     if (currentSearchKeyword) return `search|${currentSearchKeyword}|${currentSource}|${currentAudioFilter}`;
-    if (currentCategory === 'favorites') return 'favorites';
+    if (PERSONAL_LISTS.includes(currentCategory)) return currentCategory;
     return `list|${currentSource}|${currentCategory}|${currentGenre}|${currentCountry}|${currentAudioFilter}`;
 }
 
 function newFeed() {
     feed = {
         key: feedKeyFor(),
-        mode: currentSearchKeyword ? 'search' : (currentCategory === 'favorites' ? 'favorites' : 'list'),
+        mode: currentSearchKeyword ? 'search' : (PERSONAL_LISTS.includes(currentCategory) ? currentCategory : 'list'),
         page: 0,
         loading: false,
         done: false,
@@ -1609,6 +2092,10 @@ async function fetchFeedPage(target) {
     if (target.mode === 'favorites') {
         if (next > 1) return [];
         return audioFiltered(await MovieService.getFavorites());
+    }
+    if (target.mode === 'watched' || target.mode === 'hidden') {
+        if (next > 1) return [];
+        return audioFiltered(target.mode === 'watched' ? await MovieService.getWatched() : await MovieService.getHidden());
     }
     if (currentGenre) return audioFiltered(await MovieService.getByGenre(currentGenre, next));
     if (currentCountry) return audioFiltered(await MovieService.getByCountry(currentCountry, next));
@@ -1658,6 +2145,8 @@ function showGridMessage(grid, message) {
 
 /** Why a list came back with nothing — the filter is the usual answer. */
 function feedEmptyMessage() {
+    if (currentCategory === 'watched') return 'Bạn chưa đánh dấu phim nào là đã xem. Dùng nút ⋯ trên thẻ phim.';
+    if (currentCategory === 'hidden') return 'Bạn chưa ẩn phim nào.';
     if (currentSearchKeyword) return `Không tìm thấy phim nào cho “${currentSearchKeyword}”.`;
     if (currentAudioFilter === 'thuyetminh') return 'Nguồn này không có phim thuyết minh trong danh sách đang chọn.';
     if (currentAudioFilter === 'longtieng') return 'Nguồn này không có phim lồng tiếng trong danh sách đang chọn.';
@@ -1785,11 +2274,13 @@ function renderAuditBanner(context, leftovers) {
 function appendToGrid(grid, items, target) {
     if (!grid) return 0;
     const fresh = [];
+    const showHidden = currentCategory === 'hidden';
     (items || []).forEach(item => {
         if (!item || !item.slug) return;
         const key = `${item.source || currentSource}:${item.slug}`;
         if (target.seen.has(key)) return;
         target.seen.add(key);
+        if (!showHidden && hiddenSlugSet.has(item.slug)) return;
         target.items?.set(key, item);
         fresh.push(item);
     });
@@ -1797,11 +2288,12 @@ function appendToGrid(grid, items, target) {
     clearLoadingCovers(grid);
 
     const stage = document.createElement('div');
-    stage.innerHTML = renderMovieCardsHtml(fresh);
+    stage.innerHTML = renderMovieCardsHtml(fresh, { includeHidden: showHidden });
     bindCardClicks(stage);
     const fragment = document.createDocumentFragment();
     while (stage.firstChild) fragment.appendChild(stage.firstChild);
     grid.appendChild(fragment);
+    ensureRovingTab(grid);
     target.count += fresh.length;
     return fresh.length;
 }
@@ -1974,6 +2466,32 @@ async function loadFavorites() {
 }
 
 // MARK: - Open Movie Detail Modal
+/** "Phim tương tự": other titles from the movie's first genre, shown under the episodes. */
+async function loadSimilarMovies(detail) {
+    const section = document.getElementById('modal-similar');
+    const grid = document.getElementById('modal-similar-grid');
+    if (!section || !grid) return;
+    section.hidden = true;
+    const genre = detail.genreSlugs?.[0];
+    if (!genre) return;
+    let items = [];
+    try { items = await MovieService.getByGenre(genre, 1); } catch { return; }
+    // The reader may have moved on to another title while this loaded.
+    if (currentMovie?.slug !== detail.slug) return;
+    const similar = items.filter(item => item?.slug && item.slug !== detail.slug && !hiddenSlugSet.has(item.slug)).slice(0, 8);
+    if (!similar.length) return;
+    grid.innerHTML = similar.map(item => `
+        <button type="button" class="similar-card" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" aria-label="${escapeAttr(item.name)}">
+            <img loading="lazy" ${MovieImages.attr(item, 'wide')} alt="" width="320" height="180">
+            <span class="similar-title">${escapeHtml(item.name)}</span>
+            <span class="similar-meta">${escapeHtml([item.year, item.quality].filter(Boolean).join(' · '))}</span>
+        </button>`).join('');
+    grid.querySelectorAll('.similar-card').forEach(card => {
+        card.addEventListener('click', () => openMovieDetail(card.dataset.slug, card.dataset.source));
+    });
+    section.hidden = false;
+}
+
 async function openMovieDetail(slug, source = currentSource) {
     const modal = document.getElementById('movie-modal');
     setDialogOpen(modal, true);
@@ -1983,6 +2501,7 @@ async function openMovieDetail(slug, source = currentSource) {
     document.getElementById('modal-origin').textContent = '';
     document.getElementById('modal-desc').textContent = '';
     document.getElementById('server-tabs').innerHTML = '';
+    document.getElementById('modal-similar')?.setAttribute('hidden', '');
     document.getElementById('episodes-grid').innerHTML = '<span class="state-message">Đang tải danh sách tập phim…</span>';
 
     try {
@@ -1991,9 +2510,7 @@ async function openMovieDetail(slug, source = currentSource) {
 
         document.getElementById('modal-title').textContent = detail.name;
         document.getElementById('modal-origin').textContent = `${detail.origin_name || ''} ${detail.year ? '· ' + detail.year : ''}`;
-        const modalPoster = document.getElementById('modal-poster');
         const modalBackdrop = document.getElementById('modal-backdrop-img');
-        MovieImages.apply(modalPoster, detail, 'poster');
         MovieImages.apply(modalBackdrop, { poster: detail.thumb, thumb: detail.poster }, 'hero');
         setOptionalText('modal-year', detail.year);
         setOptionalText('modal-quality', detail.quality);
@@ -2003,8 +2520,27 @@ async function openMovieDetail(slug, source = currentSource) {
         setOptionalText('modal-time', detail.time);
         setOptionalText('modal-genres', detail.genres?.join(', '));
         setOptionalText('modal-countries', detail.countries?.join(', '));
+        setOptionalText('modal-cast', (detail.casts || '').split(',').slice(0, 6).join(',').trim());
+        setOptionalText('modal-director', detail.director);
+        ['cast', 'director', 'genres', 'countries'].forEach(name => {
+            const row = document.getElementById(`modal-${name}-row`);
+            if (row) row.hidden = !document.getElementById(`modal-${name}`)?.textContent.trim();
+        });
 
         document.getElementById('modal-desc').textContent = detail.description || 'Chưa có tóm tắt cho bộ phim này.';
+
+        // Watched / hide
+        const watchedBtn = document.getElementById('modal-watched-btn');
+        const hideBtn = document.getElementById('modal-hide-btn');
+        if (watchedBtn) watchedBtn.onclick = () => toggleWatched(detail);
+        if (hideBtn) {
+            hideBtn.onclick = async () => {
+                if (hiddenSlugSet.has(detail.slug)) { await unhideMovie(detail); return; }
+                await hideMovie(detail);
+                closeModal();
+            };
+        }
+        syncModalMarks();
 
         // Favorite button
         const favBtn = document.getElementById('modal-fav-btn');
@@ -2052,12 +2588,31 @@ async function openMovieDetail(slug, source = currentSource) {
         }
 
         renderEpisodes(detail.episodes, continueEntry);
+
+        // The big button does what the reader most likely wants: resume, or start.
+        const playBtn = document.getElementById('modal-play-btn');
+        const playLabel = document.getElementById('modal-play-label');
+        if (playBtn) {
+            playLabel.textContent = continueEntry ? `Tiếp tục: ${continueEntry.epName || 'Tập 1'}` : 'Phát nổi';
+            playBtn.disabled = !detail.episodes?.some(server => server.items?.length);
+            playBtn.onclick = async () => {
+                playBtn.disabled = true;
+                try {
+                    if (continueEntry) await floatContinueItem(continueEntry);
+                    else await quickFloatMovie(detail.slug, detail.source || source);
+                } finally {
+                    playBtn.disabled = false;
+                }
+            };
+        }
+        loadSimilarMovies(detail);
         if (!modal.contains(document.activeElement)) {
             modal.querySelector('.server-tab-btn, .ep-btn, #modal-close-btn')?.focus();
         }
     } catch (err) {
         console.error('Failed to get detail:', err);
         currentMovie = null;
+        document.getElementById('modal-similar')?.setAttribute('hidden', '');
         document.getElementById('modal-title').textContent = 'Không tải được phim';
         document.getElementById('modal-desc').textContent = 'Kiểm tra kết nối mạng rồi thử lại.';
         document.getElementById('server-tabs').innerHTML = '';
@@ -2253,7 +2808,7 @@ function formatFloatError(res) {
 }
 
 // MARK: - Toast Notification
-function showToast(message) {
+function showToast(message, action) {
     const existing = document.querySelector('.vibe-toast');
     if (existing) existing.remove();
 
@@ -2262,14 +2817,27 @@ function showToast(message) {
     toast.setAttribute('role', 'status');
     toast.setAttribute('aria-live', 'polite');
     toast.innerHTML = `<span>${escapeHtml(message)}</span>`;
+    let dismiss;
+    if (action) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'vibe-toast-action';
+        button.textContent = action.label;
+        button.addEventListener('click', () => { dismiss(); action.run(); });
+        toast.appendChild(button);
+    }
     document.body.appendChild(toast);
 
-    setTimeout(() => {
+    // A toast with an action stays long enough to be used.
+    const lifetime = action ? 7000 : 3500;
+    let timer = setTimeout(() => dismiss(), lifetime);
+    dismiss = () => {
+        clearTimeout(timer);
         toast.style.opacity = '0';
         toast.style.transform = 'translateY(10px)';
         toast.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
         setTimeout(() => toast.remove(), 350);
-    }, 3500);
+    };
 }
 
 function closeModal() {

@@ -344,7 +344,9 @@ const MovieService = {
         const cacheKey = source === 'all' ? 'vibe_popup_hot_movies' : `vibe_popup_hot_movies_${source}`;
 
         const pools = results.filter(result => result.status === 'fulfilled').map(result => result.value);
-        const items = this.buildTopTrending(pools, limit);
+        // Hidden movies never appear in the popup either; ask for a few extra so the list stays full.
+        const hidden = await this.getHiddenSlugSet();
+        const items = this.withoutHidden(this.buildTopTrending(pools, limit + hidden.size), hidden).slice(0, limit);
         if (items.length) {
             try { await chrome.storage.local.set({ [cacheKey]: items }); } catch {}
             return { items, stale: false };
@@ -1610,6 +1612,64 @@ const MovieService = {
         if (!slug) return false;
         const list = await this.getFavorites();
         return list.some(it => it.slug === slug);
+    },
+
+    // --- Watched / hidden marks: two small lists kept like "My list" (newest first) ---
+    _marksMax: 500,
+    async _readMarks(key) {
+        try {
+            if (typeof chrome !== 'undefined' && chrome.storage?.local) {
+                const stored = (await chrome.storage.local.get(key))[key];
+                return Array.isArray(stored) ? stored : [];
+            }
+            const stored = JSON.parse(localStorage.getItem(key) || '[]');
+            return Array.isArray(stored) ? stored : [];
+        } catch { return []; }
+    },
+    async _writeMarks(key, list) {
+        if (typeof chrome !== 'undefined' && chrome.storage?.local) await chrome.storage.local.set({ [key]: list });
+        else localStorage.setItem(key, JSON.stringify(list));
+    },
+    /** What a card needs to be drawn again later, from a list item or a movie detail. */
+    _movieMark(movie) {
+        return {
+            slug: movie.slug,
+            name: movie.name || movie.slug,
+            origin_name: movie.origin_name || '',
+            poster: movie.poster || movie.thumb || '',
+            thumb: movie.thumb || movie.poster || '',
+            source: movie.source || 'kkphim',
+            year: movie.year || '',
+            lang: movie.lang || '',
+            quality: movie.quality || '',
+            rating: movie.rating || null,
+            episode_current: movie.episode_current || '',
+            hasThuyetMinh: !!movie.hasThuyetMinh,
+            hasLongTieng: !!movie.hasLongTieng,
+            hasVietsub: movie.hasVietsub !== false,
+            isChieuRap: !!movie.isChieuRap,
+            markedAt: Date.now()
+        };
+    },
+    async _setMark(key, movie, on) {
+        if (!movie || !movie.slug) return false;
+        const list = (await this._readMarks(key)).filter(item => item.slug !== movie.slug);
+        if (on) list.unshift(this._movieMark(movie));
+        await this._writeMarks(key, list.slice(0, this._marksMax));
+        return !!on;
+    },
+    getWatched() { return this._readMarks('vibe_watched'); },
+    getHidden() { return this._readMarks('vibe_hidden'); },
+    async getWatchedSlugSet() { return new Set((await this.getWatched()).map(item => item.slug)); },
+    async getHiddenSlugSet() { return new Set((await this.getHidden()).map(item => item.slug)); },
+    /** Mark or unmark as watched; resolves with the new state. */
+    setWatched(movie, watched) { return this._setMark('vibe_watched', movie, watched); },
+    /** Hide a movie everywhere ("not interested") or bring it back; resolves with whether it is hidden. */
+    setHidden(movie, hidden) { return this._setMark('vibe_hidden', movie, hidden); },
+    /** `items` without anything in `hiddenSlugs`. */
+    withoutHidden(items, hiddenSlugs) {
+        if (!hiddenSlugs || !hiddenSlugs.size) return items || [];
+        return (items || []).filter(item => !item || !hiddenSlugs.has(item.slug));
     },
 
     async getFavoriteSlugSet() {

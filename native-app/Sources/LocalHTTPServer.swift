@@ -40,7 +40,7 @@ class LocalHTTPServer {
                     // link points. The old code used `write(atomically:)` for the
                     // port (0644) and `createFile` for the token (which follows
                     // an existing symlink).
-                    let home = FileManager.default.homeDirectoryForCurrentUser
+                    let home = AppPaths.home
                     let portFile = home.appendingPathComponent(".floatvideo_port")
                     let tokenFile = home.appendingPathComponent(".floatvideo_token")
                     Self.writePrivateFile("\(port)", to: portFile)
@@ -65,7 +65,7 @@ class LocalHTTPServer {
         listener?.cancel()
         listener = nil
         isReady = false
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        let home = AppPaths.home
         try? FileManager.default.removeItem(at: home.appendingPathComponent(".floatvideo_token"))
         try? FileManager.default.removeItem(at: home.appendingPathComponent(".floatvideo_port"))
         NSLog("[FloatVideo] HTTP server stopped")

@@ -43,6 +43,23 @@ After updating, reload the extension at `chrome://extensions`, reload any tabs
 that previously had its scripts, and rebuild/reinstall the native companion
 with `scripts/install.sh` to apply the native navigation restrictions.
 
+## Standalone catalogue app
+
+The movie catalogue also runs as the macOS app's own window, without Chrome:
+`open "$HOME/Library/Application Support/FloatVideo/VibeFloat.app"` after `scripts/install.sh`
+(press Enter at the Extension ID prompt to skip the Chrome link). It is the same web UI in a
+`WKWebView`, served from the app bundle as `vibe://app/`. The page's `chrome.*` calls are answered
+by Swift: storage is a private JSON file in `~/Library/Application Support/FloatVideo`, `fetch`
+goes through the app (GET/HEAD to the movie providers only, no cookies, 12 MB cap), and "Phát nổi"
+opens the floating player in-process. Watch progress is saved by the app, so "Tiếp tục xem" stays
+current even when the catalogue window is closed. Only one standalone app runs at a time; a second
+launch brings the first window forward. Launched by Chrome (`--native-messaging`), the app behaves
+exactly as before.
+
+Development: `VIBEFLOAT_HOME=/some/folder` keeps the app's data, port file and token out of your real
+home; `VIBEFLOAT_CATALOG_DIR` serves the catalogue from a folder instead of the bundle; and
+`VIBEFLOAT_CATALOG_SELFTEST_JS` / `_OUT` run a script in the loaded window and write its JSON result.
+
 ## Why FullFloatPiP?
 
 Every existing PiP solution fails when you go fullscreen:

@@ -3458,3 +3458,126 @@ button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]
   .audio-pill { flex: none; scroll-snap-align: start; white-space: nowrap; }
   .view-btn { padding-left: 12px; padding-right: 12px; }
 }
+
+/* Rail arrows are full-height side bars: the old vertical-centring offset pushed them up over the section header. */
+.rail-nav-btn,
+.rail-nav-btn:hover,
+.rail-nav-btn:hover:not(:disabled) { transform: none; }
+
+/* Top 10 cannot clip its artwork (the numeral hangs outside it), so it skips the hover zoom instead of spilling out of the card. */
+.movie-card-top10:hover .movie-poster,
+.movie-card-top10:focus-within .movie-poster { transform: none; }
+
+/* Episode badge stays above the hover overlay instead of dimming behind it, and never blocks the buttons. */
+.card-ep-badge { z-index: 5; pointer-events: none; }
+
+/* Keyboard focus lands clear of the sticky header and keeps the neighbouring card in view. */
+.movie-card, .continue-card { scroll-margin: 96px 32px 32px; }
+.continue-card:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 3px; }
+
+/* Hover preview: the card opens into a small preview with art, actions and a synopsis. */
+.hover-preview { position: fixed; z-index: 400; overflow: hidden; border-radius: 10px; background: #181820;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.1);
+  opacity: 0; visibility: hidden; transform: scale(0.88); pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease, visibility 0s linear 0.18s; }
+.hover-preview.is-open { opacity: 1; visibility: visible; transform: none; pointer-events: auto; transition-delay: 0s; }
+.hp-media { position: relative; aspect-ratio: 16 / 9; background: #0e0e14; }
+.hp-img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.hp-media::after { content: ""; position: absolute; inset: auto 0 0; height: 40%; background: linear-gradient(0deg, #181820, transparent); pointer-events: none; }
+.hp-ep { position: absolute; z-index: 1; right: 10px; bottom: 10px; padding: 2px 7px; border-radius: 4px; font-size: 12px; font-weight: 700; color: #fff;
+  background: rgba(0, 0, 0, 0.84); border: 1px solid rgba(255, 255, 255, 0.15); }
+.hp-body { display: flex; flex-direction: column; gap: 6px; padding: 10px 14px 16px; }
+.hp-actions { display: flex; gap: 8px; margin-bottom: 4px; }
+.hp-btn { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border-radius: 50%; cursor: pointer; color: #fff;
+  background: rgba(42, 42, 50, 0.9); border: 2px solid rgba(255, 255, 255, 0.5); transition: border-color 0.15s ease, background 0.15s ease; }
+.hp-btn:hover { border-color: #fff; background: rgba(70, 70, 80, 0.95); }
+.hp-play { color: #17171d; background: #f5f5f7; border-color: #f5f5f7; }
+.hp-play:hover { background: #dcdce0; border-color: #dcdce0; }
+.hp-list.is-listed { border-color: #46d369; color: #46d369; }
+.hp-info { margin-left: auto; }
+.hp-title { font-size: 16px; font-weight: 700; line-height: 1.25; color: #fff; }
+.hp-origin { font-size: 12px; color: #b3b3b3; }
+.hp-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; font-size: 13px; color: #c4c4ce; }
+.hp-rating { font-weight: 700; color: #46d369; }
+.hp-quality { padding: 0 5px; border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 3px; font-size: 12px; }
+.hp-genres { font-size: 13px; color: #e5e5e5; }
+.hp-desc { margin: 0; font-size: 13px; line-height: 1.45; color: #c4c4ce; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.hp-desc.hp-loading { min-height: 3.9em; color: transparent; border-radius: 4px;
+  background: linear-gradient(90deg, #22222c 25%, #2e2e3a 50%, #22222c 75%); background-size: 200% 100%; }
+@media (prefers-reduced-motion: reduce) { .hover-preview { transition: none; } }
+@media (max-width: 899px), (hover: none) { .hover-preview { display: none; } }
+
+/* Detail window: a banner carrying the title and Play, then info columns, episodes and similar titles. */
+#movie-modal .modal-content { display: flex; flex-direction: column; width: min(920px, 100%); max-width: none; max-height: calc(100vh - 48px);
+  overflow: hidden; padding: 0; border-radius: 14px; background: #181820; }
+#movie-modal .modal-body { flex: 1; min-height: 0; overflow-y: auto; padding: 0; display: block; }
+.modal-hero { position: relative; aspect-ratio: 16 / 7; min-height: 240px; max-height: 400px; overflow: hidden; background: #0e0e14; }
+.modal-hero > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.modal-hero-fade { position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(0deg, #181820 0%, rgba(24, 24, 32, 0.55) 38%, rgba(24, 24, 32, 0) 70%),
+              linear-gradient(90deg, rgba(24, 24, 32, 0.7) 0%, rgba(24, 24, 32, 0) 60%); }
+.modal-hero-content { position: absolute; left: 32px; right: 32px; bottom: 24px; display: flex; flex-direction: column; gap: 8px; }
+.modal-hero-content h2 { margin: 0; font-size: clamp(24px, 4vw, 38px); font-weight: 800; line-height: 1.1; color: #fff; text-shadow: 0 2px 12px rgba(0, 0, 0, 0.6); }
+.modal-hero-content .modal-origin { margin: 0; font-size: 14px; color: #d4d4dc; }
+.modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 6px; }
+.modal-play-btn { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 8px 24px; border: 0; border-radius: 6px;
+  background: #f5f5f7; color: #17171d; font: inherit; font-size: 16px; font-weight: 700; cursor: pointer; transition: background 0.15s ease; }
+.modal-play-btn:hover:not(:disabled) { background: #dcdce0; }
+.modal-play-btn:disabled { opacity: 0.5; cursor: default; }
+.modal-play-btn:focus-visible, .similar-card:focus-visible { outline: 2px solid #ff8da0; outline-offset: 2px; }
+.modal-actions .modal-fav-btn { min-height: 44px; padding: 8px 18px; font-size: 14px; }
+.modal-columns { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: 24px; padding: 8px 32px 16px; }
+.modal-badges { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.modal-time { font-size: 14px; color: #c4c4ce; }
+.modal-main .modal-desc { max-height: none; margin: 0; overflow: visible; font-size: 15px; line-height: 1.6; color: #e5e5e5; }
+.modal-side { display: flex; flex-direction: column; gap: 10px; margin: 0; font-size: 13px; line-height: 1.5; }
+.modal-side [hidden] { display: none; }
+.modal-side dt { display: inline; margin-right: 6px; color: #8a8a96; }
+.modal-side dd { display: inline; margin: 0; color: #d4d4dc; }
+#movie-modal .episodes-section { margin: 8px 32px; }
+.modal-similar { padding: 16px 32px 32px; }
+.modal-similar[hidden] { display: none; }
+.modal-similar h3 { margin: 0 0 12px; font-size: 20px; }
+.modal-similar-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: 12px; }
+.similar-card { display: flex; flex-direction: column; gap: 4px; padding: 0; border: 0; border-radius: 8px; overflow: hidden; cursor: pointer;
+  text-align: left; font: inherit; color: #fff; background: #22222c; transition: background 0.15s ease; }
+.similar-card:hover { background: #2e2e3a; }
+.similar-card img { display: block; width: 100%; aspect-ratio: 16 / 9; object-fit: cover; background: #0e0e14; }
+.similar-title { padding: 6px 10px 0; font-size: 14px; font-weight: 600; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; }
+.similar-meta { padding: 0 10px 10px; font-size: 12px; color: #a1a1ae; }
+@media (max-width: 700px) {
+  #movie-modal.modal-overlay { padding: 0; }
+  #movie-modal .modal-content { max-height: 100vh; border-radius: 0; height: 100%; }
+  .modal-hero { aspect-ratio: auto; height: 320px; max-height: none; }
+  .modal-hero-content { left: 20px; right: 20px; bottom: 16px; }
+  .modal-actions { flex-wrap: nowrap; }
+  .modal-play-btn { flex: 1 1 0; justify-content: center; padding-left: 16px; padding-right: 16px; }
+  .modal-actions .modal-fav-btn { flex: 0 0 auto; }
+  .modal-columns { grid-template-columns: 1fr; padding: 8px 20px 12px; }
+  #movie-modal .episodes-section { margin: 8px 20px; }
+  .modal-similar { padding: 16px 20px 24px; }
+}
+
+/* Watched and hidden marks: a green badge, a dimmed poster, a ⋯ options menu and an Undo on the toast. */
+.card-watched-badge { position: absolute; z-index: 5; left: 8px; bottom: 8px; padding: 2px 7px; border-radius: 4px; font-size: 12px; font-weight: 700;
+  color: #0b1a10; background: rgba(70, 211, 105, 0.95); pointer-events: none; }
+.movie-card.is-watched .movie-poster { opacity: 0.6; filter: saturate(0.7); }
+.movie-card.is-leaving { opacity: 0; transform: scale(0.92); pointer-events: none; transition: opacity 0.2s ease, transform 0.2s ease; }
+.card-more-btn { background: rgba(42, 42, 50, 0.9); border-radius: 50%; border: 2px solid rgba(255, 255, 255, 0.5); width: 32px; height: 32px; }
+.card-more-btn:hover { border-color: #fff; }
+.cat-personal { opacity: 0.85; }
+
+.card-menu { position: fixed; z-index: 450; display: flex; flex-direction: column; min-width: 250px; padding: 6px; border-radius: 10px; background: #1f1f28;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.12); }
+.card-menu-item { min-height: 40px; padding: 8px 12px; border: 0; border-radius: 6px; background: transparent; color: #f5f5f7; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.card-menu-item:hover, .card-menu-item:focus-visible { outline: none; background: #2e2e3a; }
+.card-menu-item:focus-visible { box-shadow: inset 0 0 0 2px #ff8da0; }
+.card-menu-item.is-danger { color: #ff8da0; }
+.card-menu-separator { height: 1px; margin: 6px 4px; background: rgba(255, 255, 255, 0.12); }
+
+.vibe-toast-action { margin-left: 8px; padding: 6px 12px; min-height: 32px; border: 1px solid rgba(255, 255, 255, 0.4); border-radius: 6px; background: transparent;
+  color: #fff; font: inherit; font-weight: 700; cursor: pointer; }
+.vibe-toast-action:hover { background: rgba(255, 255, 255, 0.12); border-color: #fff; }
+.vibe-toast-action:focus-visible { outline: 2px solid #ff8da0; outline-offset: 2px; }
+#modal-watched-btn[aria-pressed="true"] { border-color: #46d369; color: #46d369; }
+@media (prefers-reduced-motion: reduce) { .movie-card.is-leaving { transition: none; } }
