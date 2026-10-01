@@ -117,7 +117,74 @@ function navigateView() {
 }
 
 // MARK: - UI Initialization
+// MARK: - Keyboard navigation between cards
+
+/**
+ * The card to move to for an arrow key, like a TV remote: left/right walk the row (a rail or
+ * the grid in reading order), up/down jump to the nearest row above or below and land on the
+ * card closest in horizontal position. Home/End go to the ends of the row.
+ */
+function pickNeighbourCard(current, key, cards) {
+    const row = cards.filter(card => card.parentElement === current.parentElement);
+    const index = row.indexOf(current);
+    if (key === 'ArrowRight') return row[index + 1] || null;
+    if (key === 'ArrowLeft') return row[index - 1] || null;
+    if (key === 'Home') return row[0] !== current ? row[0] : null;
+    if (key === 'End') return row[row.length - 1] !== current ? row[row.length - 1] : null;
+    const rect = current.getBoundingClientRect();
+    const centreX = rect.left + rect.width / 2;
+    const centreY = rect.top + rect.height / 2;
+    const direction = key === 'ArrowDown' ? 1 : -1;
+    const others = cards.filter(card => card !== current).map(card => {
+        const box = card.getBoundingClientRect();
+        return { card, away: (box.top + box.height / 2 - centreY) * direction, offset: Math.abs(box.left + box.width / 2 - centreX) };
+    }).filter(entry => entry.away > rect.height / 2);
+    if (!others.length) return null;
+    const nearest = Math.min(...others.map(entry => entry.away));
+    // Cards in the same visual row differ by far less than half a card height.
+    const sameRow = others.filter(entry => entry.away - nearest < rect.height / 2);
+    sameRow.sort((a, b) => a.offset - b.offset);
+    return sameRow[0].card;
+}
+
+/** One Tab stop per rail or grid; the arrow keys move within it. */
+function ensureRovingTab(root) {
+    if (!root) return;
+    const groups = root.matches?.('.home-section-rail, #movie-grid') ? [root] : [...root.querySelectorAll('.home-section-rail, #movie-grid')];
+    groups.forEach(group => {
+        const cards = [...group.querySelectorAll(':scope > .movie-card')];
+        if (!cards.length) return;
+        const stop = cards.find(card => card.getAttribute('tabindex') === '0') || cards[0];
+        cards.forEach(card => card.setAttribute('tabindex', card === stop ? '0' : '-1'));
+    });
+}
+
+function installCardKeyboardNav() {
+    const keys = ['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'];
+    document.addEventListener('keydown', event => {
+        if (!keys.includes(event.key) || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || activeDialog) return;
+        const current = document.activeElement;
+        if (!current || !current.classList?.contains('movie-card')) return;
+        const cards = [...document.querySelectorAll('#home-view:not(.hidden) .movie-card, #grid-view:not(.hidden) .movie-card')];
+        const next = pickNeighbourCard(current, event.key, cards);
+        if (!next) return;
+        event.preventDefault();
+        next.focus({ preventScroll: true });
+        next.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+    });
+    // Whatever card the reader lands on (arrow, click or Tab) becomes its row's Tab stop.
+    document.addEventListener('focusin', event => {
+        const card = event.target;
+        if (!card.classList?.contains('movie-card') || !card.parentElement) return;
+        card.parentElement.querySelectorAll(':scope > .movie-card[tabindex="0"]').forEach(other => {
+            if (other !== card) other.setAttribute('tabindex', '-1');
+        });
+        card.setAttribute('tabindex', '0');
+    });
+}
+
 function initUI() {
+    installCardKeyboardNav();
     const mobileMenuBtn = document.getElementById('mobile-menu-btn');
     const closeMobileMenu = () => {
         document.body.classList.remove('mobile-menu-open');
@@ -757,7 +824,7 @@ function renderHomeSections(container, homeData) {
 
                 <div class="home-section-rail-wrap">
                     <button class="rail-nav-btn rail-prev" data-target="rail-${secIdx}" type="button" aria-label="Cuộn trái mục ${escapeAttr(sec.title)}">‹</button>
-                    <div id="rail-${secIdx}" class="${railClass}" role="region" aria-label="${escapeAttr(sec.title)}" tabindex="0">
+                    <div id="rail-${secIdx}" class="${railClass}" role="region" aria-label="${escapeAttr(sec.title)}">
                         ${renderMovieCardsHtml(sec.items, { isTop10: !!sec.isTop10, isRail: true })}
                     </div>
                     <button class="rail-nav-btn rail-next" data-target="rail-${secIdx}" type="button" aria-label="Cuộn phải mục ${escapeAttr(sec.title)}">›</button>
@@ -826,6 +893,7 @@ function renderHomeSections(container, homeData) {
 
     // Bind Card Clicks
     bindCardClicks(container);
+    ensureRovingTab(container);
     return true;
 }
 
@@ -949,7 +1017,7 @@ function renderMovieCardsHtml(items, opts = {}) {
         const cardClass = `movie-card${opts.isRail ? ' movie-card-rail' : ''}${opts.isTop10 ? ' movie-card-top10' : ''}`;
 
         return `
-            <div class="${cardClass}" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" role="group" aria-label="${escapeAttr(item.name)}" tabindex="0">
+            <div class="${cardClass}" data-slug="${escapeAttr(item.slug)}" data-source="${escapeAttr(item.source || currentSource)}" role="group" aria-label="${escapeAttr(item.name)}" tabindex="-1">
                 <div class="movie-poster-wrap">
                     ${rankHtml}
                     <img class="movie-poster" loading="lazy" ${MovieImages.attr(item, imageKind)} alt="" width="320" height="180">
@@ -1376,7 +1444,7 @@ async function loadContinueWatching() {
             ? `<div class="continue-progress"><div class="continue-progress-bar" style="width:${pct}%"></div></div>`
             : '';
         return `
-        <div class="continue-card" data-idx="${idx}" title="Phát nổi tiếp — ${escapeAttr(item.name)}">
+        <div class="continue-card" data-idx="${idx}" role="button" tabindex="0" aria-label="Phát tiếp ${escapeAttr(item.name)}, ${escapeAttr(item.epName || 'Tập 1')}" title="Phát nổi tiếp — ${escapeAttr(item.name)}">
             <div class="continue-thumb-wrap">
                 <img class="continue-thumb" loading="lazy" ${MovieImages.attr(item, 'wide')} width="280" height="158" alt="">
                 <button type="button" class="continue-play-overlay" title="Phát tiếp" aria-label="Phát tiếp ${escapeAttr(item.name)}">
@@ -1412,6 +1480,11 @@ async function loadContinueWatching() {
 
         card.addEventListener('click', (e) => {
             if (e.target.closest('.continue-delete-btn')) return;
+            handleCardAction();
+        });
+        card.addEventListener('keydown', (e) => {
+            if (e.target !== card || !['Enter', ' '].includes(e.key)) return;
+            e.preventDefault();
             handleCardAction();
         });
     });
@@ -1802,6 +1875,7 @@ function appendToGrid(grid, items, target) {
     const fragment = document.createDocumentFragment();
     while (stage.firstChild) fragment.appendChild(stage.firstChild);
     grid.appendChild(fragment);
+    ensureRovingTab(grid);
     target.count += fresh.length;
     return fresh.length;
 }

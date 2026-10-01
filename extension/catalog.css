@@ -3470,3 +3470,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, [role="button"]
 
 /* Episode badge stays above the hover overlay instead of dimming behind it, and never blocks the buttons. */
 .card-ep-badge { z-index: 5; pointer-events: none; }
+
+/* Keyboard focus lands clear of the sticky header and keeps the neighbouring card in view. */
+.movie-card, .continue-card { scroll-margin: 96px 32px 32px; }
+.continue-card:focus-visible { outline: 2px solid #f5f5f5; outline-offset: 3px; }
