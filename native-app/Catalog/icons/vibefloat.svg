@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="VibeFloat">
+  <rect width="128" height="128" rx="27" fill="#202027"/>
+  <rect x="43" y="25" width="64" height="52" rx="10" fill="#202027" stroke="#ff4664" stroke-width="7"/>
+  <rect x="21" y="43" width="74" height="59" rx="11" fill="#202027" stroke="#f7f7fa" stroke-width="8"/>
+  <path d="M52 59v27l24-13.5z" fill="#ff4664"/>
+</svg>

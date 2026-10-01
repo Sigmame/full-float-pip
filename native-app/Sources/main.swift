@@ -6,6 +6,5 @@ let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 
-// Run as accessory (no Dock icon)
-app.setActivationPolicy(.accessory)
+app.setActivationPolicy(.regular)
 app.run()

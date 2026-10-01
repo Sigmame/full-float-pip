@@ -9,7 +9,14 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "FloatVideo",
-            path: "Sources"
+            path: "Sources",
+            linkerSettings: [
+                .linkedFramework("Carbon"),
+                .linkedFramework("MediaPlayer"),
+                .linkedFramework("ApplicationServices"),
+                .linkedFramework("Speech"),
+                .linkedFramework("AVFoundation"),
+            ]
         )
     ]
 )

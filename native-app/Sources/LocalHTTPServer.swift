@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import Darwin
 
 // MARK: - LocalHTTPServer — Local HTTP Server
 // Provides valid HTTP Referer header for YouTube embeds
@@ -8,10 +9,20 @@ class LocalHTTPServer {
     private var listener: NWListener?
     private(set) var port: UInt16 = 0
     private var isReady = false
+    private let apiToken = UUID().uuidString
+    private let playCapability = UUID().uuidString
+    // Not the main queue: commands wait on the main thread (DispatchQueue.main.sync), which would deadlock
+    // and crash the app if they were also running on it.
+    private let serverQueue = DispatchQueue(label: "com.aspect.floatvideo.http", qos: .userInitiated)
+
+    var localPlayCapability: String { playCapability }
+
+    var onCommand: ((String, [String: String]) -> [String: Any]?)?
 
     func start(completion: @escaping (UInt16) -> Void) {
         do {
             let params = NWParameters.tcp
+            params.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
             listener = try NWListener(using: params, on: .any)
         } catch {
             NSLog("[FloatVideo] HTTP server failed to create listener: \(error)")
@@ -25,6 +36,18 @@ class LocalHTTPServer {
                     self?.port = port
                     self?.isReady = true
                     NSLog("[FloatVideo] HTTP server ready on port \(port)")
+                    // Save port & token for CLI & Agent hooks.
+                    // Owner-only permissions, and a symlink planted at either
+                    // path is refused rather than followed: these live directly in
+                    // $HOME, so following one would write the token wherever the
+                    // link points. The old code used `write(atomically:)` for the
+                    // port (0644) and `createFile` for the token (which follows
+                    // an existing symlink).
+                    let home = AppPaths.home
+                    let portFile = home.appendingPathComponent(".floatvideo_port")
+                    let tokenFile = home.appendingPathComponent(".floatvideo_token")
+                    Self.writePrivateFile("\(port)", to: portFile)
+                    Self.writePrivateFile(self?.apiToken ?? "", to: tokenFile)
                     completion(port)
                 }
             case .failed(let error):
@@ -38,20 +61,56 @@ class LocalHTTPServer {
             self?.handleConnection(connection)
         }
 
-        listener?.start(queue: .main)
+        listener?.start(queue: serverQueue)
     }
 
     func stop() {
         listener?.cancel()
         listener = nil
         isReady = false
+        let home = AppPaths.home
+        try? FileManager.default.removeItem(at: home.appendingPathComponent(".floatvideo_token"))
+        try? FileManager.default.removeItem(at: home.appendingPathComponent(".floatvideo_port"))
         NSLog("[FloatVideo] HTTP server stopped")
+    }
+
+    // MARK: - Private File Writing
+
+    /// Writes a secret/IPC value with owner-only permissions, refusing to follow
+    /// a symlink at the destination. Returns false when the path could not be
+    /// written safely — callers keep going, since a missing token file only
+    /// disables the CLI, it does not break the player.
+    @discardableResult
+    private static func writePrivateFile(_ text: String, to url: URL) -> Bool {
+        let path = url.path
+        // `attributesOfItem` follows symlinks, so probe explicitly.
+        if (try? FileManager.default.destinationOfSymbolicLink(atPath: path)) != nil {
+            NSLog("[FloatVideo] Refusing to write \(url.lastPathComponent): symlink at path")
+            return false
+        }
+        // A stale file from a previous run would also defeat O_EXCL; remove it
+        // first, deliberately, rather than reusing whatever is there.
+        try? FileManager.default.removeItem(atPath: path)
+        let fd = open(path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard fd >= 0 else {
+            NSLog("[FloatVideo] Could not create \(url.lastPathComponent) (errno \(errno))")
+            return false
+        }
+        defer { close(fd) }
+        let data = Data(text.utf8)
+        let written = data.withUnsafeBytes { write(fd, $0.baseAddress, $0.count) }
+        guard written == data.count else {
+            NSLog("[FloatVideo] Short write for \(url.lastPathComponent)")
+            return false
+        }
+        _ = fchmod(fd, 0o600)
+        return true
     }
 
     // MARK: - Connection Handling
 
     private func handleConnection(_ connection: NWConnection) {
-        connection.start(queue: .main)
+        connection.start(queue: serverQueue)
 
         // Read HTTP request
         connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, error in
@@ -81,12 +140,87 @@ class LocalHTTPServer {
 
         let path = parts[1]
 
+        // Browsers may omit both Origin and Referer, so these headers are only
+        // defense in depth. The capability/token below is the auth decision.
+        if path.hasPrefix("/play") {
+            guard queryValue("cap", in: path) == playCapability else {
+                sendErrorResponse(connection: connection, code: 403, message: "Forbidden")
+                return
+            }
+            for headerName in ["origin", "referer"] {
+                if let value = Self.headerValue(headerName, in: lines), !Self.isLoopbackOrigin(value) {
+                    NSLog("[FloatVideo] Refused \(path) from non-loopback \(headerName): \(value.prefix(80))")
+                    sendErrorResponse(connection: connection, code: 403, message: "Forbidden")
+                    return
+                }
+            }
+        } else if path == "/health" {
+            guard Self.headerValue("x-vibefloat-token", in: lines) == apiToken else {
+                sendErrorResponse(connection: connection, code: 403, message: "Forbidden")
+                return
+            }
+        }
+
         if path.hasPrefix("/play") {
             handlePlayRequest(path: path, connection: connection)
         } else if path == "/health" {
             sendResponse(connection: connection, body: "OK", contentType: "text/plain")
+        } else if path.hasPrefix("/api/") {
+            let token = lines.first(where: { $0.lowercased().hasPrefix("x-vibefloat-token:") })?
+                .split(separator: ":", maxSplits: 1).last?.trimmingCharacters(in: .whitespaces)
+            guard token == apiToken else {
+                sendErrorResponse(connection: connection, code: 403, message: "Forbidden")
+                return
+            }
+            handleApiRequest(path: path, connection: connection)
         } else {
             sendErrorResponse(connection: connection, code: 404, message: "Not Found")
+        }
+    }
+
+    // MARK: - Request Header Helpers
+
+    private static let loopbackHosts: Set<String> = ["127.0.0.1", "localhost", "::1"]
+
+    private static func headerValue(_ name: String, in lines: [String]) -> String? {
+        let prefix = name.lowercased() + ":"
+        return lines.first { $0.lowercased().hasPrefix(prefix) }?
+            .split(separator: ":", maxSplits: 1).last?
+            .trimmingCharacters(in: .whitespaces)
+    }
+
+    private func queryValue(_ name: String, in path: String) -> String? {
+        guard let components = URLComponents(string: "http://localhost\(path)") else { return nil }
+        return components.queryItems?.first(where: { $0.name == name })?.value
+    }
+
+    /// True when an Origin/Referer header points at this machine — i.e. at the
+    /// player page we served ourselves. `null` origins and anything unparsable
+    /// count as foreign.
+    private static func isLoopbackOrigin(_ value: String) -> Bool {
+        guard let host = URLComponents(string: value)?.host ?? URL(string: value)?.host else { return false }
+        return loopbackHosts.contains(host.lowercased())
+    }
+
+    // MARK: - API Request Handler (Vibe-Sync & Automation)
+
+    private func handleApiRequest(path: String, connection: NWConnection) {
+        guard let urlComponents = URLComponents(string: "http://localhost\(path)") else {
+            sendErrorResponse(connection: connection, code: 400, message: "Invalid URL")
+            return
+        }
+        let command = String(urlComponents.path.dropFirst("/api/".count))
+        var params: [String: String] = [:]
+        for item in urlComponents.queryItems ?? [] {
+            params[item.name] = item.value ?? ""
+        }
+
+        let result = onCommand?(command, params) ?? ["success": true, "command": command]
+        if let jsonData = try? JSONSerialization.data(withJSONObject: result, options: []),
+           let jsonString = String(data: jsonData, encoding: .utf8) {
+            sendResponse(connection: connection, body: jsonString, contentType: "application/json; charset=utf-8")
+        } else {
+            sendResponse(connection: connection, body: "{\"success\":true}", contentType: "application/json; charset=utf-8")
         }
     }
 
@@ -103,26 +237,20 @@ class LocalHTTPServer {
         let videoId = queryItems.first(where: { $0.name == "v" })?.value ?? ""
         let site = queryItems.first(where: { $0.name == "site" })?.value ?? "youtube"
         let startTime = queryItems.first(where: { $0.name == "t" })?.value ?? "0"
-        let safeWidth = max(Int(queryItems.first(where: { $0.name == "w" })?.value ?? "") ?? 640, 200)
-        let safeHeight = max(Int(queryItems.first(where: { $0.name == "h" })?.value ?? "") ?? 360, 200)
+        let safeWidth = min(max(Int(queryItems.first(where: { $0.name == "w" })?.value ?? "") ?? 640, 200), 1920)
+        let safeHeight = min(max(Int(queryItems.first(where: { $0.name == "h" })?.value ?? "") ?? 360, 200), 1080)
 
-        if videoId.isEmpty {
-            sendErrorResponse(connection: connection, code: 400, message: "Missing video ID")
+        guard site == "youtube", videoId.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil else {
+            sendErrorResponse(connection: connection, code: 400, message: "Invalid video ID")
             return
         }
 
-        let html: String
-        switch site {
-        case "youtube":
-            html = buildYouTubePlayerHTML(
-                videoId: videoId,
-                startTime: startTime,
-                safeWidth: safeWidth,
-                safeHeight: safeHeight
-            )
-        default:
-            html = buildGenericEmbedHTML(videoId: videoId)
-        }
+        let html = buildYouTubePlayerHTML(
+            videoId: videoId,
+            startTime: startTime,
+            safeWidth: safeWidth,
+            safeHeight: safeHeight
+        )
 
         sendResponse(connection: connection, body: html, contentType: "text/html; charset=utf-8")
     }
@@ -139,7 +267,8 @@ class LocalHTTPServer {
         <head>
             <meta charset="utf-8">
             <meta name="viewport" content="width=device-width, initial-scale=1">
-            <title>Float Video</title>
+            <meta name="referrer" content="no-referrer">
+            <title>VibeFloat</title>
             <style>
                 * { margin: 0; padding: 0; box-sizing: border-box; }
                 html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
@@ -280,25 +409,6 @@ class LocalHTTPServer {
         """
     }
 
-    private func buildGenericEmbedHTML(videoId: String) -> String {
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                * { margin: 0; padding: 0; }
-                html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-                iframe { width: 100%; height: 100%; border: none; }
-            </style>
-        </head>
-        <body>
-            <iframe src="\(videoId)" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-        </body>
-        </html>
-        """
-    }
-
     // MARK: - HTTP Response
 
     private func sendResponse(connection: NWConnection, body: String, contentType: String) {
@@ -307,7 +417,6 @@ class LocalHTTPServer {
         HTTP/1.1 200 OK\r
         Content-Type: \(contentType)\r
         Content-Length: \(bodyData.count)\r
-        Access-Control-Allow-Origin: *\r
         Connection: close\r
         \r
 
