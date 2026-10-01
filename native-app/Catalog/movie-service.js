@@ -334,28 +334,6 @@ const MovieService = {
         return '';
     },
 
-    /** Fresh recommendations for every popup opening, with offline fallback. */
-    async getPopupHotMovies(limit = 8, source = 'all') {
-        const audio = ['thuyetminh', 'longtieng'].includes(source);
-        const tasks = audio ? [this._getKKPhimList(source, 1)] : source === 'nguonc'
-            ? [this._getNguonCList('moi', 1)] : ['chieurap', 'bo', 'le'].map(category => this._getKKPhimList(category, 1));
-        if (source === 'all') tasks.push(this._getNguonCList('moi', 1));
-        const results = await Promise.allSettled(tasks);
-        const cacheKey = source === 'all' ? 'vibe_popup_hot_movies' : `vibe_popup_hot_movies_${source}`;
-
-        const pools = results.filter(result => result.status === 'fulfilled').map(result => result.value);
-        // Hidden movies never appear in the popup either; ask for a few extra so the list stays full.
-        const hidden = await this.getHiddenSlugSet();
-        const items = this.withoutHidden(this.buildTopTrending(pools, limit + hidden.size), hidden).slice(0, limit);
-        if (items.length) {
-            try { await chrome.storage.local.set({ [cacheKey]: items }); } catch {}
-            return { items, stale: false };
-        }
-        let cached = [];
-        try { cached = (await chrome.storage.local.get(cacheKey))[cacheKey] || []; } catch {}
-        return { items: Array.isArray(cached) ? cached.slice(0, limit) : [], stale: true };
-    },
-
     getYouTubeMovies(keyword = '', filter = 'all') {
         const normalize = value => String(value || '').toLowerCase().normalize('NFD')
             .replace(/[\u0300-\u036f]/g, '').replace(/đ/g, 'd');

@@ -65,6 +65,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (typeof MovieImages !== 'undefined') MovieImages.install(document);
     favSlugSet = await MovieService.getFavoriteSlugSet();
     await refreshMarkSets();
+    await window.aiDubbing?.ready;   // the saved dubbing choice, before the buttons are drawn
     initUI();
     loadContinueWatching();
     navigateView();
@@ -215,6 +216,13 @@ function renderYouTubeView() {
         });
     });
 }
+
+/** "Tiếp tục xem" entry by slug, for the menu bar and Dock menus. */
+window.floatContinueBySlug = async function floatContinueBySlug(slug) {
+    const entry = (await MovieService.getContinueWatching()).find(item => item.slug === slug);
+    if (!entry) return false;
+    try { return await floatContinueItem(entry); } catch { return false; }
+};
 
 // MARK: - Watched / hidden marks
 
@@ -767,9 +775,9 @@ function initUI() {
         ghostBtn?.setAttribute('aria-pressed', isGhost ? 'true' : 'false');
     };
 
-    NativeStatus.init({
-        onResult: (res) => { if (typeof res.isGhost === 'boolean') syncGhostUI(res.isGhost); }
-    })?.check();
+    chrome.runtime.sendMessage({ type: 'GET_NATIVE_STATUS' })
+        .then(res => { if (typeof res?.isGhost === 'boolean') syncGhostUI(res.isGhost); })
+        .catch(() => {});
 
     chrome.runtime.onMessage.addListener((msg) => {
         if (msg?.type === 'NATIVE_STATUS_BROADCAST') {
