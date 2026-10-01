@@ -54,7 +54,76 @@ const MovieImages = {
             alt = src === poster ? thumb : poster;
         }
         if (alt === src) alt = '';
+        // Preflight found this title's first choice far heavier than its alternative.
+        if (item && item.__lite && item.__lite[kind] && alt) return { src: alt, alt: src };
         return { src: src || this.fallback, alt };
+    },
+
+    // --- Artwork weight: a few titles ship originals (500 KB+, up to 3840x2160) as their poster ---
+    sizes: new Map(),            // url -> bytes; artwork URLs never change, so this is kept
+    heavyBytes: 250 * 1024,
+    _sizesKey: 'vibe_art_sizes_v1',
+    _sizesMax: 1500,
+    _sizesLoaded: null,
+    _loadSizes() {
+        if (!this._sizesLoaded) {
+            this._sizesLoaded = (async () => {
+                try {
+                    const stored = (await chrome.storage.local.get(this._sizesKey))[this._sizesKey] || {};
+                    Object.entries(stored).forEach(([url, bytes]) => { if (!this.sizes.has(url)) this.sizes.set(url, bytes); });
+                } catch {}
+            })();
+        }
+        return this._sizesLoaded;
+    },
+    async _probeSize(url, signal) {
+        try {
+            const res = await fetch(url, { method: 'HEAD', credentials: 'omit', referrerPolicy: 'no-referrer', signal });
+            const bytes = Number(res.headers.get('content-length'));
+            if (res.ok && bytes > 0) { this.sizes.set(url, bytes); return true; }
+        } catch {}
+        return false;
+    },
+    async _probeAll(urls, ms) {
+        const queue = [...urls];
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), ms);
+        const worker = async () => { while (queue.length) await this._probeSize(queue.shift(), controller.signal); };
+        try { await Promise.all(Array.from({ length: Math.min(10, queue.length) }, worker)); }
+        finally { clearTimeout(timer); }
+    },
+    /**
+     * Look at the weight of what is about to be shown and, for a title whose first choice is heavy
+     * while the alternative is clearly lighter, show the alternative. Never blocks longer than
+     * `budgetMs`, and any failure (offline, blocked, no Content-Length) leaves the choice unchanged.
+     */
+    async preflight(items, kind, budgetMs = 500) {
+        if (typeof fetch !== 'function' || !items || !items.length) return;
+        try {
+            await this._loadSizes();
+            const choices = items.map(item => ({ item, picked: this.pick(item, kind) }));
+            const unknown = new Set();
+            choices.forEach(({ picked }) => {
+                if (picked.src && picked.src !== this.fallback && !this.sizes.has(picked.src)) unknown.add(picked.src);
+            });
+            if (unknown.size) await this._probeAll(unknown, budgetMs);
+            // Only heavy titles need their alternative measured as well.
+            const second = new Set();
+            choices.forEach(({ picked }) => {
+                const size = this.sizes.get(picked.src);
+                if (size > this.heavyBytes && picked.alt && !this.sizes.has(picked.alt)) second.add(picked.alt);
+            });
+            if (second.size) await this._probeAll(second, budgetMs);
+            choices.forEach(({ item, picked }) => {
+                const size = this.sizes.get(picked.src);
+                const altSize = this.sizes.get(picked.alt);
+                if (size > this.heavyBytes && altSize && altSize < size * 0.8) item.__lite = { ...item.__lite, [kind]: true };
+            });
+            if (unknown.size || second.size) {
+                const kept = [...this.sizes].slice(-this._sizesMax);
+                await chrome.storage.local.set({ [this._sizesKey]: Object.fromEntries(kept) });
+            }
+        } catch {}
     },
 
     attr(item, kind) {

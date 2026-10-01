@@ -866,6 +866,8 @@ async function loadHomePage() {
         await refreshFavSet();
         if (seq !== homeLoadSeq) return;
         applyHomeHero(cached);
+        await preflightArt(homeItems(cached), 'wide');
+        if (seq !== homeLoadSeq) return;
         if (renderHomeSections(container, cached)) shownSignature = MovieService.homeSignature(cached);
         else cached = null;
     }
@@ -898,6 +900,8 @@ async function loadHomePage() {
         } else {
             applyHomeHeroUnlessEarly(homeData, earlyHeroSlug);
         }
+        await preflightArt(homeItems(homeData), 'wide');
+        if (seq !== homeLoadSeq) return;
         renderHomeSections(container, homeData);
     } catch (e) {
         if (cached) return; // The cached page is still useful when the refresh fails.
@@ -1505,6 +1509,17 @@ async function floatContinueItem(item) {
 // response for a view the user has already left is recognised (the object
 // identity changed) and dropped instead of appended to the wrong list.
 const FEED_PAGE_CAP = 60;
+// Measure artwork weight before showing it; never throws and never waits long.
+async function preflightArt(items, kind) {
+    try { await MovieImages.preflight?.(items, kind); } catch {}
+}
+function homeItems(homeData) {
+    return (homeData.sections || []).flatMap(section => section.items || []);
+}
+function currentArtKind() {
+    return currentViewMode === 'view-cinema' ? 'wide' : 'poster';
+}
+
 const VIEW_MODE_STORAGE_KEY = 'vibe_catalog_view_mode';
 
 // Poster and Cinema differ only in layout and artwork, so switching keeps the loaded list and scroll position.
@@ -1842,6 +1857,7 @@ async function loadMoreMovies() {
     setFeedFooter('loading');
     try {
         const items = await fetchFeedPage(target);
+        await preflightArt(items, currentArtKind());
         if (feed !== target) return; // the view changed while this was in flight
         const added = appendToGrid(document.getElementById('movie-grid'), items, target);
         if (target.page === 0 && target.mode === 'list' && items.length) {
@@ -1914,6 +1930,8 @@ async function loadFeedView() {
     }
     if (cached && feed === target) {
         // Last good first page, shown at once; the scroll feed continues from page 2.
+        await preflightArt(cached.items, currentArtKind());
+        if (feed !== target) return;
         appendToGrid(document.getElementById('movie-grid'), cached.items, target);
         target.page = 1;
         target.cachedCount = cached.items.length;
@@ -1940,6 +1958,8 @@ async function refreshFeedFirstPage(target) {
         if (target.page !== 1 || target.loading || window.scrollY > 300) return;
         const grid = document.getElementById('movie-grid');
         if (!grid) return;
+        await preflightArt(items, currentArtKind());
+        if (feed !== target || target.page !== 1 || target.loading) return;
         grid.innerHTML = '';
         target.seen.clear();
         target.items?.clear();
