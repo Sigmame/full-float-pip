@@ -183,8 +183,171 @@ function installCardKeyboardNav() {
     });
 }
 
+// MARK: - Hover preview (the card grows into a small preview, like a streaming home screen)
+
+const PREVIEW_DWELL_MS = 450;
+const PREVIEW_SWITCH_MS = 140;
+const previewDetails = new Map();   // "source:slug" -> detail promise, so each title is fetched once
+
+/** Where the preview goes: centred on the card, kept inside the window and below the header. */
+function placePreview(card, view, height, headerHeight = 70) {
+    const margin = 12;
+    const width = Math.round(Math.min(Math.max(card.width * 1.35, 300), 360));
+    const left = Math.round(Math.max(margin, Math.min(card.left + card.width / 2 - width / 2, view.width - width - margin)));
+    const wanted = card.top - 24;
+    const top = Math.round(Math.max(headerHeight, Math.min(wanted, view.height - height - margin)));
+    return { left, top, width };
+}
+
+function previewDetail(slug, source) {
+    const key = `${source}:${slug}`;
+    if (!previewDetails.has(key)) {
+        previewDetails.set(key, MovieService.getDetail(slug, source).catch(() => null));
+        if (previewDetails.size > 60) previewDetails.delete(previewDetails.keys().next().value);
+    }
+    return previewDetails.get(key);
+}
+
+function installHoverPreview() {
+    const canHover = () => window.matchMedia('(hover: hover) and (pointer: fine)').matches && window.innerWidth >= 900;
+    let panel = null, current = null, timer = null, leaveTimer = null, token = 0;
+
+    const build = () => {
+        panel = document.createElement('div');
+        panel.id = 'hover-preview';
+        panel.className = 'hover-preview';
+        // A pointer-only extra: everything it does is also on the card itself, so it stays out of the tab order.
+        panel.setAttribute('aria-hidden', 'true');
+        panel.innerHTML = `
+            <div class="hp-media"><img class="hp-img" alt="" referrerpolicy="no-referrer"><div class="card-badges-top hp-badges"></div><span class="hp-ep" hidden></span></div>
+            <div class="hp-body">
+                <div class="hp-actions">
+                    <button type="button" class="hp-btn hp-play" tabindex="-1">${PLAY_ICON_SVG}</button>
+                    <button type="button" class="hp-btn hp-list" tabindex="-1"></button>
+                    <button type="button" class="hp-btn hp-info" tabindex="-1">${INFO_BTN_SVG}</button>
+                </div>
+                <div class="hp-title"></div>
+                <div class="hp-origin"></div>
+                <div class="hp-meta"></div>
+                <div class="hp-genres"></div>
+                <p class="hp-desc"></p>
+            </div>`;
+        document.body.appendChild(panel);
+        panel.addEventListener('mouseenter', () => clearTimeout(leaveTimer));
+        panel.addEventListener('mouseleave', () => scheduleHide());
+        panel.addEventListener('click', event => {
+            if (!current) return;
+            const card = current;
+            const press = selector => card.querySelector(selector)?.click();
+            if (event.target.closest('.hp-play')) { hide(); press('.card-quick-float'); }
+            else if (event.target.closest('.hp-list')) { press('.card-mylist-btn'); syncList(card); }
+            else { hide(); press('.card-info-btn'); }
+        });
+        window.addEventListener('scroll', hide, { passive: true, capture: true });
+        window.addEventListener('blur', hide);
+        document.addEventListener('keydown', hide);
+    };
+
+    const syncList = card => {
+        const listed = card.querySelector('.card-mylist-btn')?.classList.contains('is-listed');
+        const button = panel.querySelector('.hp-list');
+        button.innerHTML = listed ? LIST_CHECK_SVG : LIST_ICON_SVG;
+        button.classList.toggle('is-listed', !!listed);
+        button.setAttribute('title', listed ? 'Bỏ khỏi danh sách' : 'Thêm vào danh sách');
+    };
+
+    const fill = (card) => {
+        const text = selector => card.querySelector(selector)?.textContent.trim() || '';
+        const image = card.querySelector('img.movie-poster');
+        panel.querySelector('.hp-img').src = image ? (image.currentSrc || image.src) : '';
+        panel.querySelector('.hp-badges').innerHTML = card.querySelector('.card-badges-top')?.innerHTML || '';
+        const episode = text('.card-ep-badge');
+        const episodeEl = panel.querySelector('.hp-ep');
+        episodeEl.hidden = !episode;
+        episodeEl.textContent = episode;
+        panel.querySelector('.hp-title').textContent = text('.movie-title');
+        panel.querySelector('.hp-origin').textContent = text('.movie-origin');
+        const meta = [];
+        const rating = text('.card-badge-rating');
+        if (rating) meta.push(`<span class="hp-rating">★ ${escapeHtml(rating)}</span>`);
+        const year = text('.movie-footer span');
+        if (year) meta.push(`<span>${escapeHtml(year.replace(/^Năm\s*/, ''))}</span>`);
+        const quality = text('.card-hd');
+        if (quality) meta.push(`<span class="hp-quality">${escapeHtml(quality)}</span>`);
+        panel.querySelector('.hp-meta').innerHTML = meta.join('');
+        panel.querySelector('.hp-genres').textContent = '';
+        panel.querySelector('.hp-desc').textContent = '';
+        panel.querySelector('.hp-desc').classList.add('hp-loading');
+        panel.querySelector('.hp-play').setAttribute('title', 'Phát nổi');
+        panel.querySelector('.hp-info').setAttribute('title', 'Chi tiết phim');
+        syncList(card);
+    };
+
+    const place = card => {
+        const rect = card.getBoundingClientRect();
+        const spot = placePreview(rect, { width: window.innerWidth, height: window.innerHeight }, panel.offsetHeight || 340,
+            document.querySelector('.navbar')?.getBoundingClientRect().bottom || 70);
+        panel.style.width = `${spot.width}px`;
+        panel.style.left = `${spot.left}px`;
+        panel.style.top = `${spot.top}px`;
+        const height = panel.offsetHeight;
+        const again = placePreview(rect, { width: window.innerWidth, height: window.innerHeight }, height,
+            document.querySelector('.navbar')?.getBoundingClientRect().bottom || 70);
+        panel.style.top = `${again.top}px`;
+        panel.style.transformOrigin = `${Math.round(rect.left + rect.width / 2 - again.left)}px ${Math.round(rect.top + rect.height / 2 - again.top)}px`;
+    };
+
+    const show = async card => {
+        if (!canHover() || activeDialog || !card.isConnected) return;
+        if (!panel) build();
+        current = card;
+        const mine = ++token;
+        fill(card);
+        panel.classList.remove('is-open');
+        place(card);
+        requestAnimationFrame(() => { if (mine === token) panel.classList.add('is-open'); });
+
+        const detail = await previewDetail(card.dataset.slug, card.dataset.source || currentSource);
+        if (mine !== token || !detail) { if (mine === token) panel.querySelector('.hp-desc').classList.remove('hp-loading'); return; }
+        const description = (detail.description || '').slice(0, 220);
+        panel.querySelector('.hp-desc').textContent = description + (detail.description && detail.description.length > 220 ? '…' : '');
+        panel.querySelector('.hp-desc').classList.remove('hp-loading');
+        panel.querySelector('.hp-genres').textContent = (detail.genres || []).slice(0, 3).join(' • ');
+        if (detail.time) panel.querySelector('.hp-meta').insertAdjacentHTML('beforeend', `<span>${escapeHtml(detail.time)}</span>`);
+        if (detail.thumb) MovieImages.apply(panel.querySelector('.hp-img'), detail, 'wide');
+        place(card);
+    };
+
+    function hide() {
+        clearTimeout(timer);
+        clearTimeout(leaveTimer);
+        token++;
+        current = null;
+        panel?.classList.remove('is-open');
+    }
+    const scheduleHide = () => { clearTimeout(leaveTimer); leaveTimer = setTimeout(hide, 120); };
+
+    document.addEventListener('mouseover', event => {
+        const card = event.target.closest?.('.movie-card');
+        if (!card || card === current) { if (current && event.target.closest?.('.movie-card') === current) clearTimeout(leaveTimer); return; }
+        if (card.closest('#hover-preview')) return;
+        clearTimeout(timer);
+        clearTimeout(leaveTimer);
+        timer = setTimeout(() => show(card), panel?.classList.contains('is-open') ? PREVIEW_SWITCH_MS : PREVIEW_DWELL_MS);
+    });
+    document.addEventListener('mouseout', event => {
+        const card = event.target.closest?.('.movie-card');
+        if (!card) return;
+        const to = event.relatedTarget;
+        if (to && (card.contains(to) || to.closest?.('#hover-preview'))) return;
+        clearTimeout(timer);
+        if (card === current) scheduleHide();
+    });
+}
+
 function initUI() {
     installCardKeyboardNav();
+    installHoverPreview();
     const mobileMenuBtn = document.getElementById('mobile-menu-btn');
     const closeMobileMenu = () => {
         document.body.classList.remove('mobile-menu-open');
