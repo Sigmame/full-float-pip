@@ -1,10 +1,10 @@
 # VibeFloat design system
 
-VibeFloat keeps a video visible while someone works. Its controls should be easy to find, easy to read, and quiet when idle. This document is the source of truth for the Chrome popup, the movie catalog, and the macOS floating player.
+VibeFloat keeps a video visible while someone works. Its controls should be easy to find, easy to read, and quiet when idle. This document is the source of truth for the movie catalogue and the macOS floating player.
 
 ## Color
 
-Use semantic roles rather than adding a new hue for each feature. Both web surfaces use a dark theme; native controls sit over video and use translucent dark chrome. Never use color alone to communicate state.
+Use semantic roles rather than adding a new hue for each feature. The catalogue uses a dark theme; native controls sit over video and use translucent dark chrome. Never use color alone to communicate state.
 
 | Role | Web value | Use |
 | --- | --- | --- |
@@ -46,7 +46,7 @@ Show movie ratings, quality, release year, audio type, and availability only whe
 
 ## Implementation map
 
-`extension/popup.css` and `extension/catalog.css` define the web role variables at `:root`; component rules consume those variables. `native-app/Sources/FloatWindow.swift` defines the matching AppKit roles in `VibeTheme`. If a component needs a new color, type size, spacing step, or radius, add its reason and role here before adding the value in code. Movie art, source logos, platform traffic-light controls, and one-pixel hairlines are content or platform exceptions.
+`native-app/Catalog/catalog.css` defines the web role variables at `:root`; component rules consume those variables. `native-app/Sources/FloatWindow.swift` defines the matching AppKit roles in `VibeTheme`. If a component needs a new color, type size, spacing step, or radius, add its reason and role here before adding the value in code. Movie art, source logos, platform traffic-light controls, and one-pixel hairlines are content or platform exceptions.
 
 ## Floating player chrome
 

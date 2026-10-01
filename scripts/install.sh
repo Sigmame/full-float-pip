@@ -1,6 +1,8 @@
 #!/bin/bash
-# install.sh — Float Video one-click install script
-# Compile Swift native app and configure Chrome Native Messaging
+# install.sh — builds VibeFloat and installs the app.
+#
+# VibeFloat is a standalone macOS app: the movie catalogue, the floating player and the menu bar
+# item are all in it. No browser extension is needed.
 
 set -e
 umask 077
@@ -8,160 +10,76 @@ umask 077
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 NATIVE_APP_DIR="$PROJECT_DIR/native-app"
+INSTALL_DIR="$HOME/Library/Application Support/FloatVideo"
+APP="$INSTALL_DIR/VibeFloat.app"
 
 echo ""
-echo "Float Video — Installer"
-echo "=========================="
+echo "VibeFloat — Installer"
+echo "====================="
 echo ""
 
-# ---- Step 1: Compile Swift app ----
-echo "[1/4] Compiling native app..."
+# ---- Step 1: compile ----
+echo "[1/3] Compiling the app..."
 cd "$NATIVE_APP_DIR"
 swift build -c release 2>&1 | tail -5
-
 BUILD_OUTPUT="$NATIVE_APP_DIR/.build/release/FloatVideo"
 if [ ! -f "$BUILD_OUTPUT" ]; then
-    echo "Compilation failed! Please check if Xcode Command Line Tools are installed."
-    echo "   Run: xcode-select --install"
+    echo "Compilation failed! Check that the Xcode Command Line Tools are installed:"
+    echo "   xcode-select --install"
     exit 1
 fi
 echo "Compilation successful"
 
-# ---- Step 2: Install executable ----
+# ---- Step 2: install the app bundle, with the catalogue UI inside it ----
 echo ""
-echo "[2/4] Installing executable..."
-INSTALL_DIR="$HOME/Library/Application Support/FloatVideo"
-mkdir -p "$INSTALL_DIR"
-APP_MACOS="$INSTALL_DIR/VibeFloat.app/Contents/MacOS"
-mkdir -p "$APP_MACOS"
-cp "$BUILD_OUTPUT" "$APP_MACOS/FloatVideo"
-cp "$PROJECT_DIR/native-app/Support/Info.plist" "$INSTALL_DIR/VibeFloat.app/Contents/Info.plist"
-# Catalogue UI for the standalone app window: the same files the extension serves.
-CATALOG_DIR="$INSTALL_DIR/VibeFloat.app/Contents/Resources/catalog"
+echo "[2/3] Installing the app..."
+mkdir -p "$APP/Contents/MacOS"
+cp "$BUILD_OUTPUT" "$APP/Contents/MacOS/FloatVideo"
+cp "$NATIVE_APP_DIR/Support/Info.plist" "$APP/Contents/Info.plist"
+chmod +x "$APP/Contents/MacOS/FloatVideo"
+
+CATALOG_DIR="$APP/Contents/Resources/catalog"
 rm -rf "$CATALOG_DIR"
 mkdir -p "$CATALOG_DIR"
-for f in catalog.html catalog.css catalog.js movie-service.js site-access.js native-status.js ai-dubbing.js; do
-    cp "$PROJECT_DIR/extension/$f" "$CATALOG_DIR/$f"
+for f in catalog.html catalog.css catalog.js movie-service.js site-access.js dub-preference.js; do
+    cp "$NATIVE_APP_DIR/Catalog/$f" "$CATALOG_DIR/$f"
 done
-cp -R "$PROJECT_DIR/extension/icons" "$CATALOG_DIR/icons"
-chmod +x "$APP_MACOS/FloatVideo"
-# Launch path must be inside the .app so speech-recognition permission can attach.
+cp -R "$NATIVE_APP_DIR/Catalog/icons" "$CATALOG_DIR/icons"
+
+# The launch path must be inside the .app so the speech-recognition permission can attach.
 ln -sfn "VibeFloat.app/Contents/MacOS/FloatVideo" "$INSTALL_DIR/FloatVideo"
-xattr -cr "$INSTALL_DIR/VibeFloat.app" 2>/dev/null || true
-codesign --force --sign - --identifier "com.aspect.floatvideo" --timestamp=none "$INSTALL_DIR/VibeFloat.app" 2>/dev/null \
-  || codesign --force --sign - "$APP_MACOS/FloatVideo"
-echo "Installed and signed: $APP_MACOS/FloatVideo"
+xattr -cr "$APP" 2>/dev/null || true
+codesign --force --sign - --identifier "com.aspect.floatvideo" --timestamp=none "$APP" 2>/dev/null \
+  || codesign --force --sign - "$APP/Contents/MacOS/FloatVideo"
+echo "Installed and signed: $APP"
 
-# Write a user-owned file without following a pre-existing symlink.
-write_atomic_private() {
-    local destination="$1"
-    local directory
-    directory="$(dirname "$destination")"
-    if [ -L "$destination" ]; then
-        echo "ERROR: refusing to replace symlink: $destination" >&2
-        exit 1
+# ---- Step 3: clean up what the old browser-extension setup left behind ----
+echo ""
+echo "[3/3] Checking for files from the old Chrome setup..."
+OLD_FILES=(
+    "$INSTALL_DIR/float_video_host.sh"
+    "$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.aspect.floatvideo.json"
+)
+removed=0
+for old in "${OLD_FILES[@]}"; do
+    if [ -f "$old" ] && [ ! -L "$old" ]; then
+        rm -f "$old"
+        echo "  removed: $old"
+        removed=$((removed + 1))
     fi
-    local temporary
-    temporary="$(mktemp "$directory/.floatvideo-write.XXXXXX")"
-    trap 'rm -f "$temporary"' EXIT
-    cat > "$temporary"
-    chmod 600 "$temporary"
-    mv -f "$temporary" "$destination"
-    trap - EXIT
-}
-
-# ---- Step 3: Create Native Messaging Host wrapper script ----
-echo ""
-echo "[3/4] Configuring Native Messaging..."
-
-write_atomic_private "$INSTALL_DIR/float_video_host.sh" << HOSTEOF
-#!/bin/bash
-LOG_DIR="\$HOME/Library/Logs/FloatVideo"
-LOG_FILE="\$LOG_DIR/native-host.log"
-mkdir -p "\$LOG_DIR"
-printf '\n[%s] starting native host pid=%s\n' "\$(date '+%Y-%m-%d %H:%M:%S')" "\$\$" >> "\$LOG_FILE"
-exec "$INSTALL_DIR/VibeFloat.app/Contents/MacOS/FloatVideo" --native-messaging 2>>"\$LOG_FILE"
-HOSTEOF
-chmod +x "$INSTALL_DIR/float_video_host.sh"
-
-# ---- Step 4: Configure Chrome Native Messaging Host ----
-NATIVE_HOST_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
-mkdir -p "$NATIVE_HOST_DIR"
-
-# Get Extension ID
-echo ""
-echo "[4/4] Configuring extension association..."
-echo ""
-echo "  Please install the Chrome extension first:"
-echo "  1. Open Chrome -> chrome://extensions"
-echo "  2. Enable 'Developer mode'"
-echo "  3. Click 'Load unpacked'"
-echo "  4. Select: $PROJECT_DIR/extension"
-echo "  5. Copy the Extension ID (e.g.: abcdefghijklmnopqrstuvwxyz)"
-echo ""
-echo "  (Press Enter to skip: the standalone app does not need Chrome.)"
-read -p "  Enter Chrome Extension ID: " EXT_ID
-# Strip whitespace/normalise case before validating.
-EXT_ID="$(printf '%s' "$EXT_ID" | tr -d '[:space:]' | tr 'A-P' 'a-p')"
-
-if [ -z "$(printf '%s' "$EXT_ID" | tr -d '[:space:]')" ]; then
-    echo ""
-    echo "  Skipped the Chrome link. Open the app directly:"
-    echo "    open \"$INSTALL_DIR/VibeFloat.app\""
-    echo "  Run this script again with an Extension ID to use it from Chrome too."
-    exit 0
-fi
-
-# Fail closed. A wildcard here would let ANY extension on the machine talk to
-# this native host, which is a far bigger hole than a rerun: the host can drive
-# the floating window and read the CLI token. Chrome extension IDs are exactly
-# 32 characters from a-p, so anything else is a typo, not a valid ID.
-if [[ ! "$EXT_ID" =~ ^[a-p]{32}$ ]]; then
-    echo ""
-    echo "  ERROR: '$EXT_ID' is not a valid Chrome Extension ID."
-    echo "  An ID is exactly 32 characters, each between a and p."
-    echo ""
-    echo "  How to get it:"
-    echo "  1. Open Chrome -> chrome://extensions"
-    echo "  2. Enable 'Developer mode'"
-    echo "  3. 'Load unpacked' -> select: $PROJECT_DIR/extension"
-    echo "  4. Copy the ID shown on the extension's card and re-run this script."
-    echo ""
-    echo "  The native messaging manifest was NOT written. Fix the ID and re-run."
-    exit 1
-fi
-
-write_atomic_private "$NATIVE_HOST_DIR/com.aspect.floatvideo.json" << EOF
-{
-  "name": "com.aspect.floatvideo",
-  "description": "Float Video native messaging host",
-  "path": "$INSTALL_DIR/float_video_host.sh",
-  "type": "stdio",
-  "allowed_origins": [
-    "chrome-extension://$EXT_ID/"
-  ]
-}
-EOF
+done
+[ "$removed" -eq 0 ] && echo "  nothing to remove"
+echo "  If the VibeFloat extension is still in Chrome, remove it at chrome://extensions."
 
 echo ""
 echo "================================="
 echo "Installation complete!"
 echo "================================="
 echo ""
-echo "  Native app: $INSTALL_DIR/FloatVideo"
-echo "  Messaging manifest: $NATIVE_HOST_DIR/com.aspect.floatvideo.json"
-echo "  Host stderr log: $HOME/Library/Logs/FloatVideo/native-host.log"
-echo "  Chrome extension: $PROJECT_DIR/extension"
-echo "  Standalone app:   open \"$INSTALL_DIR/VibeFloat.app\"   (movie catalogue in its own window)"
+echo "  Open the app:   open \"$APP\""
+echo "  Then use the menu bar icon, the Dock icon, or the window: catalogue, search, favourites,"
+echo "  watched / hidden lists, and 'Phát nổi' to open the floating player over any app."
 echo ""
-echo "  Usage:"
-echo "  1. Open any video site (YouTube, Bilibili, etc.)"
-echo "  2. Click the Float Video icon in Chrome toolbar"
-echo "  3. Select a video and click 'Float'"
-echo "  4. The video will play in a floating window, always on top"
-echo ""
-echo "  Shortcuts:"
-echo "  ESC — Close floating window"
-echo "  Drag title bar — Move window"
-echo "  Click yellow button — Toggle opacity"
+echo "  If VibeFloat is already running, quit it (⌘Q) and open it again to use this build."
+echo "  Remote control from a terminal: scripts/vibe-sync.sh"
 echo ""

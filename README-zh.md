@@ -1,176 +1,92 @@
-# FullFloatPiP
+# VibeFloat（FullFloatPiP）
 
 **[English](README.md) | 中文**
 
-**画中画，浮在一切之上——包括全屏应用。**
+**一个电影目录加一个悬浮在一切之上的播放器 —— 包括全屏应用。**
 
-唯一能创建真正始终置顶浮动视频窗口的 Chrome 扩展——浮在**所有**应用之上，包括全屏 Terminal、全屏 IDE、全屏任何应用。专为 vibe coding 开发者打造，让你在编码时同时观看视频、教程或直播。
-
-> 没有任何其他画中画工具、Chrome 扩展或浏览器功能能让视频浮在 macOS 全屏应用之上。FullFloatPiP 可以。
+VibeFloat 是一个独立的 macOS 应用。在它自己的窗口里浏览电影，点击 **Phát nổi**，视频就会以无边框窗口悬浮在所有应用之上 —— 全屏终端、全屏 IDE、任何全屏程序 —— 并且在每个桌面空间都可见。专为一边写代码、一边看电影、教程或直播的开发者设计。
 
 <p align="center">
-  <img src="docs/demo.png" alt="FullFloatPiP 浮在全屏 Terminal 之上" width="640">
+  <img src="docs/demo.png" alt="VibeFloat 悬浮在全屏终端之上" width="640">
   <br>
-  <sub><i>FullFloatPiP 窗口浮在全屏 Terminal 之上——浏览器都不在屏幕上，视频依然持续播放。</i></sub>
+  <sub><i>播放器悬浮在全屏终端之上。</i></sub>
 </p>
 
-## 为什么选择 FullFloatPiP？
+## 功能
 
-所有现有的画中画方案在你切到全屏时都会失效：
-
-| 功能 | Chrome 内置 PiP | PiPifier (Safari) | 其他扩展 | **FullFloatPiP** |
-|---|---|---|---|---|
-| 浮在普通窗口之上 | 是 | 是 | 是 | **是** |
-| 浮在全屏应用之上 | 否 | 否 | 否 | **是** |
-| 跨所有 Space/桌面可见 | 否 | 部分 | 否 | **是** |
-| YouTube 风格控制栏 | 否 | 否 | 不一定 | **是** |
-| 支持任意视频网站 | 有限 | 仅 Safari | 不一定 | **是** |
-
-**核心问题：** Chrome 浏览器沙盒限制无法创建覆盖全屏应用的窗口。FullFloatPiP 通过混合架构解决——Chrome 扩展负责视频检测，搭配 macOS 原生应用 (Swift/AppKit) 创建系统级浮动窗口。
-
-## 专为 Vibe Coding 打造
-
-Vibe coding 意味着保持心流——全屏 Terminal 或 IDE，零干扰，专注编码。但有时你想在角落里放一个教程视频、技术演讲或 lo-fi 音乐。
-
-使用 FullFloatPiP：
-1. 在 Chrome 中打开 YouTube（或 B站、Twitch 等）
-2. 点击 FullFloatPiP 图标，选择视频，点击 **Float**
-3. 切换到全屏 Terminal / VS Code / Cursor / Xcode
-4. 视频始终浮在角落——永远可见，永远置顶
-
-无需切换窗口。无需分屏。无需退出全屏。代码和视频，同时拥有。
-
-## 功能特性
-
-- **真正始终置顶** — 浮在所有应用上方，包括 macOS 全屏应用
-- **跨 Space 显示** — 在所有 macOS 桌面/Space 中可见
-- **PiP 风格界面** — 无边框视频窗口，鼠标悬停时显示控制栏
-- **YouTube 风格控制栏** — 播放/暂停、快进10秒、音量滑块、进度条拖拽、时间显示
-- **自动视频检测** — 角标显示视频数量，自动检测 SPA 导航（YouTube、B站）
-- **锁定宽高比** — 缩放时保持视频原始比例
-- **记忆位置和大小** — 下次打开时恢复上次的窗口位置
-- **拖拽 & 缩放** — 标题栏拖拽移动，任意边角缩放
-- **透明度切换** — 半透明模式，减少视觉遮挡
-- **多站点支持** — YouTube、B站、Twitch、优酷、爱奇艺、腾讯视频、抖音、Netflix* 以及任何含 HTML5 视频的网站
-
-## 支持的视频网站
-
-| 网站 | 加载策略 | 说明 |
-|---|---|---|
-| YouTube | 通过本地 HTTP 服务器嵌入 | Cookie 转发，Referer 修复 Error 153 |
-| B站 (Bilibili) | 播放器嵌入 | 高画质，无弹幕 |
-| Twitch | 播放器嵌入 | 支持直播 |
-| 优酷 | 播放器嵌入 | — |
-| 爱奇艺 | 全页加载 + JS 注入 | — |
-| 腾讯视频 | 全页加载 + JS 注入 | — |
-| 抖音 | 全页加载 + JS 注入 | — |
-| Netflix | — | DRM 保护，无法播放* |
-| 其他网站 | 自动检测 `<video>` 元素 | 回退到全页加载 + JS 隔离视频 |
+- **目录窗口** —— 首页有大图和多个分类行（院线、配音、剧集、动漫、电影）、搜索、分类、类型和国家、无限滚动网格，以及带剧集和相似影片的详情窗口。方向键在卡片之间移动；鼠标停在卡片上会出现预览。
+- **你的列表** —— *Danh sách của tôi*（收藏）、带进度条的 *Tiếp tục xem*、*Đã xem*（标记已看/未看）和 *Đã ẩn*（隐藏不喜欢的电影；被隐藏的片子会从所有行和列表中消失，并且可以恢复）。右键点击卡片、点击卡片上的 ⋯ 按钮，或在选中的卡片上按 **W**（已看）/ **H**（隐藏）。
+- **YouTube 影片** —— 来自发行方频道的近年亚洲影片精选列表，带搜索和筛选。见 [筛选策略](docs/youtube-movies.md)。
+- **悬浮播放器** —— 始终置顶、所有空间可见、YouTube 风格控制条、快进快退、音量、倍速、尺寸预设、透明度、点击穿透、带自动下一集和跳过片头的剧集导航，以及可选的离线越南语配音。
+- **菜单栏和 Dock 菜单** —— 打开目录、暂停或关闭播放器、继续观看、切换点击穿透和 AI 配音、退出。
+- 播放器打开时的**全局快捷键**（例如 ⌘⇧G 点击穿透）。
 
 ## 安装
 
-### 系统要求
-
-- macOS 12 (Monterey) 或更高版本
-- Google Chrome 浏览器
-- Xcode Command Line Tools
-
-### 安装步骤
+要求：macOS 12 (Monterey) 或更高版本，以及 Xcode Command Line Tools。不需要浏览器。
 
 ```bash
-# 1. 安装 Xcode 命令行工具（如果尚未安装）
-xcode-select --install
-
-# 2. 克隆仓库
+xcode-select --install                      # 如果还没有命令行工具，只需一次
 git clone https://github.com/Sigmame/full-float-pip.git
 cd full-float-pip
-
-# 3. 运行安装脚本
-chmod +x scripts/install.sh
 ./scripts/install.sh
+open "$HOME/Library/Application Support/FloatVideo/VibeFloat.app"
 ```
 
-安装脚本会自动：
-1. 编译 Swift 原生应用
-2. 安装可执行文件到 `~/Library/Application Support/FloatVideo/`
-3. 配置 Chrome Native Messaging Host
-4. 提示你加载 Chrome 扩展
+脚本会编译应用，把它安装到 `~/Library/Application Support/FloatVideo/`（目录界面在应用包内），为本机做临时签名，并清除旧的 Chrome 方案留下的文件。重新安装后请退出应用（⌘Q）再重新打开。卸载：`./scripts/uninstall.sh`（保留你保存的列表；`--purge` 会一并删除）。
 
-然后在 Chrome 中加载扩展：
-1. 打开 `chrome://extensions`
-2. 开启**开发者模式**
-3. 点击**加载已解压的扩展程序**，选择 `extension/` 文件夹
-4. 复制扩展 ID，在安装脚本提示时输入
+## 使用
 
-## 使用方法
+1. 打开 VibeFloat。选一部电影（卡片、大图、详情窗口），点击 **Phát nổi**。
+2. 切换到任何应用，即使全屏：播放器始终在最上层。关闭目录窗口不会停止播放。
+3. 鼠标移到播放器上会出现控制条：拖动标题栏移动，点击时间轴跳转，ESC 关闭，拖动边缘调整大小（锁定宽高比）。
 
-1. 打开任意视频网站（YouTube、B站等）
-2. 点击工具栏中的 **FullFloatPiP** 图标——角标显示检测到的视频数量
-3. 选择视频并点击 **Float**
-4. 视频弹出到浮动窗口，显示加载动画
-5. 切换到任意应用（包括全屏应用）——视频始终浮在最上层
+**尺寸。** 播放器菜单提供 Small（480 pt）、Medium（640 pt）和 Wide（最宽 960 pt），并记住上次的选择。Wide 不超过可见屏幕宽度的 75% 和包含控制条在内的 85% 高度预算；自动摆放会尽量保持所选尺寸。
 
-### 控制（鼠标悬停时显示）
+**默认值。** 点击穿透默认**关闭**，也不会被自动打开。AI 配音默认**关闭**，需要你明确开启；播放器里的离线配音同样默认关闭。
 
-- **标题栏** — 拖拽移动；关闭(红)、透明度切换(黄)、置顶指示(绿)
-- **进度条** — 点击任意位置跳转；红色条显示播放进度
-- **播放/暂停** — 切换播放状态
-- **快进 10 秒** — 向前跳转 10 秒
-- **音量** — 静音切换 + 滑块
-- **时间显示** — 当前位置 / 总时长
-- **ESC** — 关闭浮动窗口
-- **缩放** — 拖拽任意边或角（锁定宽高比）
+## 安全范围
 
-## 技术架构
+- 目录只访问电影提供方（`phimapi.com`、`ophim1.com`、`ophim.com`、`nguonc.com`、`streamc.xyz`、`kkphim.com`、`kkphimplayer.com`、`kkphimplayer6.com` 及其子域名）和封面图主机 `phimimg.com`。请求由应用代发：仅 GET/HEAD、仅 HTTPS、不带 cookie、上限 12 MB，重定向会按同一名单重新检查。页面不能嵌入任何框架，并带有内容安全策略。
+- 播放器把远程页面和 iframe 的导航限制在这些提供方内；媒体 CDN 请求不受影响。YouTube 只播放审核名单里的确切视频 ID。
+- 目录数据（收藏、标记、进度、缓存）是一个私有 JSON 文件：`~/Library/Application Support/FloatVideo/catalog-storage.json`。
+- 本地控制工具 `scripts/vibe-sync.sh` 在应用运行时读取 `~/.floatvideo_token` 中的私有令牌；直接调用 `/api/` 需要 `X-VibeFloat-Token` 头。
+
+## 工作原理
 
 ```
-Chrome 扩展 ──[Native Messaging (stdio)]──> Swift 原生应用
- (视频检测与提取)                              (浮动窗口与视频播放)
+VibeFloat.app
+ ├─ 目录窗口   ── WKWebView，从应用包以 vibe://app/ 显示 native-app/Catalog（HTML/CSS/JS）
+ │                  └─ Swift 桥：存储、网络、"Phát nổi"、状态               (CatalogBridge.swift)
+ ├─ 悬浮播放器 ── 位于全屏应用之上的 NSPanel，所有空间可见                    (FloatWindow.swift)
+ ├─ 本地 HTTP  ── 带有效 Referer 的 YouTube 嵌入页和 /api/ 控制接口         (LocalHTTPServer.swift)
+ └─ 菜单栏+Dock ── 快捷操作                                                  (MenuBarController.swift)
 ```
 
-### 架构说明
+- `FloatWindow.swift` 创建窗口层级为 `maximumWindow + 1`、集合行为为 `canJoinAllSpaces` + `fullScreenAuxiliary` 的 `NSPanel`，这正是它能悬浮在全屏应用之上并出现在每个空间的原因。
+- `CatalogWindow.swift` / `CatalogBridge.swift` / `CatalogSupport.swift` 提供应用包内的界面、响应其 `chrome.*` 风格的调用，并包含经过测试的纯逻辑部分（网络策略、文件路径、存储、进度）。
+- `native-app/Catalog/` 是整个目录界面：`catalog.html|css|js`、`movie-service.js`（提供方、缓存、列表）、`site-access.js`（审核过的 YouTube 影片）、`dub-preference.js`。
 
-FullFloatPiP 采用双组件架构，绕过 Chrome 浏览器的沙盒限制：
+### 从 Chrome 扩展迁移
 
-**Chrome 扩展 (Manifest V3)**
-- `content.js` — 注入到网页中，检测 `<video>` 元素，提取视频源、标题、尺寸。通过 MutationObserver 监测 SPA 导航。
-- `background.js` — Service Worker。桥接 Content Script/Popup 与原生应用，通过 Chrome Native Messaging API 通信。管理进程生命周期。
-- `popup.js` — 扩展弹出界面。显示检测到的视频和 "Float" 按钮。
+Chrome 扩展及其 native-messaging 宿主已移除。扩展能做而应用不能做的事：检测你浏览器里打开页面上的 `<video>` 并从那里悬浮，以及为浏览器标签朗读页面字幕。其余一切 —— 目录、列表、YouTube 影片、悬浮播放器及其控制 —— 都在应用里。保存在扩展里的收藏和标记不会被复制过来。安装脚本会删除旧的 native-messaging 清单；请在 `chrome://extensions` 手动移除扩展本身。
 
-**macOS 原生应用 (Swift)**
-- `AppDelegate.swift` — 接收来自 Chrome 的消息，路由 open/close/ping 操作。
-- `FloatWindow.swift` — 核心实现。创建 `NSPanel`，窗口层级设为 `maximumWindow + 1`，集合行为设为 `canJoinAllSpaces` + `fullScreenAuxiliary`。这就是它能浮在全屏应用之上、在所有 Space 可见的原因。
-- `LocalHTTPServer.swift` — 随机端口的临时 HTTP 服务器。为 YouTube 嵌入页面提供正确的 `Referer` 头以避免 Error 153。包含 YouTube IFrame API 桥接，用于播放控制。
-- `NativeMessageHandler.swift` — Chrome Native Messaging 协议实现（4 字节小端序长度前缀 + UTF-8 JSON）。
+## 开发
 
-### 视频加载策略
+```bash
+cd native-app
+swift build                                   # 调试构建
+for t in Catalog/tests/*.test.js; do node "$t"; done
+swiftc -swift-version 5 Sources/CatalogSupport.swift tests/catalog-support.swift -o /tmp/catalog-support && /tmp/catalog-support
+```
 
-原生应用使用基于优先级的加载策略：
-
-1. **直接视频源** — 如果 `<video>` 元素有非 blob 的 `src`，直接加载到 `<video>` 标签
-2. **YouTube 通过本地 HTTP 服务器** — 嵌入 YouTube iframe，提供正确的 Referer、Cookie 注入和 IFrame API 控制
-3. **站点专用嵌入** — 使用干净的播放器嵌入页面（B站播放器、Twitch 播放器、优酷嵌入）
-4. **全页加载 + JS 注入** — 在 WKWebView 中加载整个页面，然后注入 JavaScript 隔离并最大化视频元素（隐藏非祖先链 DOM 节点，将视频设为 `position: fixed; 100vw x 100vh`）
-
-### 为什么不直接用 Chrome 的 PiP？
-
-Chrome 内置的画中画使用浏览器自身的窗口管理。在 macOS 上，浏览器窗口无法放置在全屏应用之上——这是操作系统层面的限制。FullFloatPiP 通过使用**原生 macOS 应用**的 `NSPanel` 并设置最高窗口层级来绕过这个限制，操作系统允许这种窗口浮在全屏应用之上。
+`VIBEFLOAT_HOME=/some/folder` 让应用的数据、端口文件和令牌不碰你真实的主目录；`VIBEFLOAT_CATALOG_DIR` 从某个文件夹而不是应用包提供目录界面（无需重装即可改界面）；`VIBEFLOAT_CATALOG_SELFTEST_JS` / `_OUT` 在已加载的窗口里运行脚本并写出 JSON 结果。
 
 ## 已知限制
 
-- **DRM 内容** — Netflix、Disney+ 等使用 Widevine DRM 的平台无法在浮动窗口中播放
-- **Blob URL** — 某些网站使用 Blob URL 进行视频流传输，会回退到全页加载 + JS 注入
-- **Cookie 不共享** — 浮动窗口与 Chrome 不共享登录态，部分网站可能需要重新登录
-- **仅支持 macOS** — 需要 macOS 12+ 和原生 Swift 伴生应用，不支持 Windows/Linux
-
-## 卸载
-
-```bash
-chmod +x scripts/uninstall.sh
-./scripts/uninstall.sh
-```
-
-然后在 `chrome://extensions` 中手动删除扩展。
+- **DRM 内容**（Netflix、Disney+ 及其他 Widevine 平台）无法在悬浮窗口中播放。
+- **不共享登录状态**；需要登录的网站不受支持。
+- **仅限 macOS**（12+），在本机构建和签名；暂无经过公证的下载包。
 
 ## 许可证
 
@@ -178,4 +94,4 @@ MIT
 
 ## 贡献
 
-欢迎提交 Issue 和 Pull Request。重大修改请先开 Issue 讨论。
+欢迎提交 Issue 和 Pull Request。重大改动请先开 Issue 讨论。
