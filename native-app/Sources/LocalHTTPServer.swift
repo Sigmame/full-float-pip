@@ -11,6 +11,9 @@ class LocalHTTPServer {
     private var isReady = false
     private let apiToken = UUID().uuidString
     private let playCapability = UUID().uuidString
+    // Not the main queue: commands wait on the main thread (DispatchQueue.main.sync), which would deadlock
+    // and crash the app if they were also running on it.
+    private let serverQueue = DispatchQueue(label: "com.aspect.floatvideo.http", qos: .userInitiated)
 
     var localPlayCapability: String { playCapability }
 
@@ -58,7 +61,7 @@ class LocalHTTPServer {
             self?.handleConnection(connection)
         }
 
-        listener?.start(queue: .main)
+        listener?.start(queue: serverQueue)
     }
 
     func stop() {
@@ -107,7 +110,7 @@ class LocalHTTPServer {
     // MARK: - Connection Handling
 
     private func handleConnection(_ connection: NWConnection) {
-        connection.start(queue: .main)
+        connection.start(queue: serverQueue)
 
         // Read HTTP request
         connection.receive(minimumIncompleteLength: 1, maximumLength: 8192) { [weak self] data, _, _, error in

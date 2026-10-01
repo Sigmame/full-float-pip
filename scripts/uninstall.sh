@@ -1,33 +1,52 @@
 #!/bin/bash
-# uninstall.sh — Float Video uninstall script
+# uninstall.sh — removes VibeFloat.
+#
+# Your favourites, watched / hidden lists and "Tiếp tục xem" live in
+# ~/Library/Application Support/FloatVideo/catalog-storage.json. They are kept unless you pass --purge.
 
 set -e
 
 echo ""
-echo "Float Video — Uninstaller"
-echo "=========================="
+echo "VibeFloat — Uninstaller"
+echo "======================="
 echo ""
 
-# Remove native app
-INSTALL_DIR="$HOME/Library/Application Support/FloatVideo"
-if [ -d "$INSTALL_DIR" ]; then
-    rm -rf "$INSTALL_DIR"
-    echo "Removed: $INSTALL_DIR"
-else
-    echo "Not found: $INSTALL_DIR (skipped)"
+APP="$HOME/Applications/VibeFloat.app"
+DATA_DIR="$HOME/Library/Application Support/FloatVideo"
+KEEP="catalog-storage.json"
+
+if pgrep -f "VibeFloat.app/Contents/MacOS/FloatVideo" >/dev/null 2>&1; then
+    echo "VibeFloat is running. Quit it (⌘Q) first, then run this again."
+    exit 1
 fi
 
-# Remove Native Messaging Host manifest
-NATIVE_HOST="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.aspect.floatvideo.json"
-if [ -f "$NATIVE_HOST" ]; then
-    rm "$NATIVE_HOST"
-    echo "Removed: $NATIVE_HOST"
+if [ -d "$APP" ]; then
+    rm -rf "$APP"
+    echo "Removed: $APP"
 else
-    echo "Not found: $NATIVE_HOST (skipped)"
+    echo "Not found: $APP (nothing to remove there)"
+fi
+
+if [ ! -d "$DATA_DIR" ]; then
+    echo "No data folder: $DATA_DIR"
+elif [ "$1" = "--purge" ]; then
+    rm -rf "$DATA_DIR"
+    echo "Removed: $DATA_DIR (including your saved lists)"
+else
+    # The app of earlier versions lived here too; take it, and everything else, but keep the saved lists.
+    find "$DATA_DIR" -mindepth 1 -maxdepth 1 ! -name "$KEEP" -exec rm -rf {} +
+    echo "Cleaned: $DATA_DIR"
+    [ -f "$DATA_DIR/$KEEP" ] && echo "Kept your saved lists: $DATA_DIR/$KEEP   (run with --purge to delete them too)"
+fi
+
+# Files from the old Chrome setup, if they are still around.
+OLD_MANIFEST="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.aspect.floatvideo.json"
+if [ -f "$OLD_MANIFEST" ]; then
+    rm -f "$OLD_MANIFEST"
+    echo "Removed: $OLD_MANIFEST"
 fi
 
 echo ""
-echo "Uninstall complete!"
-echo ""
-echo "  Note: The Chrome extension must be removed manually at chrome://extensions"
+echo "Uninstall complete."
+echo "  If the VibeFloat extension is still in Chrome, remove it at chrome://extensions."
 echo ""

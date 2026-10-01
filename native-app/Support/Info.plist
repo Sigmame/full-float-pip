@@ -10,6 +10,20 @@
   <string>FloatVideo</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleDisplayName</key>
+  <string>VibeFloat</string>
+  <key>CFBundleIconFile</key>
+  <string>AppIcon</string>
+  <key>CFBundleInfoDictionaryVersion</key>
+  <string>6.0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>12.0</string>
+  <key>LSApplicationCategoryType</key>
+  <string>public.app-category.entertainment</string>
+  <key>NSPrincipalClass</key>
+  <string>NSApplication</string>
+  <key>NSHighResolutionCapable</key>
+  <true/>
   <key>CFBundleVersion</key>
   <string>1.1.0</string>
   <key>CFBundleShortVersionString</key>

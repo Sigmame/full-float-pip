@@ -3,7 +3,7 @@
 // catalog.js, which is a plain script with globals, so this runs it in a `vm`
 // with the few DOM nodes it touches and drives the feed directly.
 //
-//   node extension/tests/catalog-feed.test.js
+//   node native-app/Catalog/tests/catalog-feed.test.js
 //
 // It covers the parts that are easy to get wrong and hard to see by scrolling:
 // deduplicating overlapping pages, dropping a response for a view the user has

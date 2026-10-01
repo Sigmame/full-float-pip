@@ -1,6 +1,6 @@
 # Curated recent Asian YouTube films
 
-The popup offers 15 live-action films released in 2021–2024, prioritizing Hong
+The catalogue's "Phim YouTube" category offers 15 live-action films released in 2021–2024, prioritizing Hong
 Kong films and films with Hong Kong action stars. Mainland productions with
 Hong Kong actors retain their actual region; the filter is explicitly labelled
 “Hồng Kông & sao HK”. AI narration, dubbing and translated subtitles are allowed.
@@ -57,13 +57,13 @@ and [Westbound Inn on Rotten Tomatoes](https://www.rottentomatoes.com/m/westboun
 
 ## Updating and verification
 
-Update `extension/site-access.js` and `FloatWindow.curatedYouTubeMovieIDs`
-together. `extension/tests/popup-hot.test.js` checks identical native/extension
-allowlists, retired-ID rejection, filters and original-title/cast search.
-`site-access.test.js` checks browsing and mismatched embed denial.
+Update `native-app/Catalog/site-access.js` and `FloatWindow.curatedYouTubeMovieIDs`
+together. `native-app/Catalog/tests/site-access.test.js` checks identical native/catalogue
+allowlists and host boundaries; `native-app/Catalog/tests/youtube-films.test.js` checks
+retired-ID rejection, float requests, filters and original-title/cast search.
 
 `native-app/tests/youtube-player.test.js` checks progress, pause/play, seek,
 volume, mute and error reporting. `native-app/tests/youtube-playback-e2e.py`
 defaults to Phá chiến and requires the playback clock to advance with a valid
 feature duration. Use `--binary` to check an installed companion. Rebuild the
-native companion after changing the allowlist; reload the unpacked extension.
+app (`scripts/install.sh`) after changing the allowlist.

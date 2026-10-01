@@ -55,15 +55,5 @@ const movie = (n, extra = {}) => ({ slug: `m-${n}`, name: `Phim ${n}`, source: '
     assert.equal(service.withoutHidden(items, new Set()).length, 4, 'an empty set keeps everything');
     assert.equal(service.withoutHidden(undefined, new Set(['m-1'])).length, 0);
 
-    // The popup's hot list never shows a hidden movie, and stays full.
-    service._getKKPhimList = async () => [1, 2, 3, 4, 5, 6].map(n => movie(n, { rating: String(9 - n * 0.1) }));
-    service._getNguonCList = async () => [];
-    let hot = await service.getPopupHotMovies(4);
-    assert.equal(hot.items.length, 4);
-    const topSlug = hot.items[0].slug;
-    await service.setHidden({ slug: topSlug, name: 'x' }, true);
-    hot = await service.getPopupHotMovies(4);
-    assert(!hot.items.some(m => m.slug === topSlug), 'the hidden title is gone from the popup list');
-    assert.equal(hot.items.length, 4, 'the list is topped up from the rest');
-    console.log('movie-marks: watched and hidden lists, order, cap, bad input, filtering and the popup list passed');
+    console.log('movie-marks: watched and hidden lists, order, cap, bad input and filtering passed');
 })().catch(e => { console.error(e); process.exitCode = 1; });

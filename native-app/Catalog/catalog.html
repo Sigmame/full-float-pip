@@ -41,10 +41,6 @@
 
       <button id="mobile-menu-btn" class="mobile-menu-btn" type="button" aria-expanded="false" aria-controls="mobile-menu-panel mobile-categories">Menu</button>
       <div class="nav-right" id="mobile-menu-panel">
-        <button id="native-status" class="native-status status-unknown" title="Trạng thái kết nối Native Companion App" type="button" aria-controls="native-help" aria-expanded="false" disabled>
-          <span class="status-dot"></span>
-          <span class="status-text">Đang kiểm tra App…</span>
-        </button>
         <button id="btn-toggle-aidub" class="ghost-nav-btn aidub-nav-btn" title="Lồng tiếng AI từ phụ đề thời gian thực (Tự động ducking âm lượng)" type="button" aria-pressed="false">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z"/>
@@ -77,19 +73,6 @@
       </div>
     </header>
 
-    <div id="native-help" class="native-help" role="region" aria-labelledby="native-help-title" hidden>
-      <p id="native-help-title" class="native-help-title">Chưa kết nối App macOS</p>
-      <ol class="native-help-steps">
-        <li>Mở Terminal tại thư mục <code>full-float-pip</code>.</li>
-        <li>Chạy lệnh bên dưới, rồi tải lại tiện ích tại <code>chrome://extensions</code>.</li>
-      </ol>
-      <code class="native-help-cmd">./scripts/install.sh</code>
-      <div class="native-help-actions">
-        <button type="button" id="native-help-copy" class="native-help-btn">Sao chép lệnh</button>
-        <button type="button" id="native-help-retry" class="native-help-btn native-help-btn-primary">Kiểm tra lại</button>
-      </div>
-      <p id="native-help-msg" class="native-help-msg" role="status"></p>
-    </div>
 
     <!-- Categories & Filters Bar -->
     <nav class="categories-bar" id="mobile-categories" aria-label="Danh mục phim">
@@ -133,6 +116,7 @@
 
         <button class="cat-btn cat-fav" data-cat="favorites">Danh sách của tôi</button>
         <button class="cat-btn cat-personal" data-cat="watched">Đã xem</button>
+        <button class="cat-btn cat-personal" data-cat="youtube">Phim YouTube</button>
         <button class="cat-btn cat-personal" data-cat="hidden">Đã ẩn</button>
         <button id="btn-clear-filters" class="cat-btn cat-clear-filters hidden" type="button" title="Xóa bộ lọc">&times; Bỏ lọc</button>
       </div>
@@ -204,6 +188,25 @@
       </div>
 
       <!-- 2. Category / Search Grid View (When browsing a specific category or searching) -->
+      <div id="youtube-view" class="youtube-view hidden">
+        <div class="section-header">
+          <div class="section-title-wrap">
+            <h2>Phim thuyết minh trên YouTube</h2>
+            <span id="youtube-count" class="result-count" role="status"></span>
+          </div>
+          <div class="section-controls">
+            <input id="youtube-search" class="youtube-search" type="search" aria-label="Tìm phim YouTube" placeholder="Tìm tên phim, diễn viên…" autocomplete="off">
+            <select id="youtube-filter" class="youtube-filter" aria-label="Lọc phim YouTube">
+              <option value="all">Tất cả</option>
+              <option value="hongkong">Diễn viên Hồng Kông</option>
+              <option value="vietnamese">Lồng tiếng Việt</option>
+            </select>
+          </div>
+        </div>
+        <p class="youtube-hint">Phim chọn sẵn · Chỉ tải video khi bạn bấm phát · Năm hiển thị là năm phim ra mắt</p>
+        <div id="youtube-grid" class="youtube-grid"></div>
+      </div>
+
       <div id="grid-view" class="grid-view hidden">
         <div class="section-header">
           <div class="section-title-wrap">
@@ -409,9 +412,8 @@
   <!-- Debug: leftover transient nodes after a load — off unless ?audit=1 -->
   <div id="catalog-audit" class="catalog-audit hidden" role="status" aria-live="polite"></div>
 
-  <script src="ai-dubbing.js"></script>
+  <script src="dub-preference.js"></script>
   <script src="site-access.js"></script>
-  <script src="native-status.js"></script>
   <script src="movie-service.js"></script>
   <script src="catalog.js"></script>
 </body>
