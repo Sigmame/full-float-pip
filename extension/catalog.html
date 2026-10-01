@@ -132,6 +132,8 @@
         </select>
 
         <button class="cat-btn cat-fav" data-cat="favorites">Danh sách của tôi</button>
+        <button class="cat-btn cat-personal" data-cat="watched">Đã xem</button>
+        <button class="cat-btn cat-personal" data-cat="hidden">Đã ẩn</button>
         <button id="btn-clear-filters" class="cat-btn cat-clear-filters hidden" type="button" title="Xóa bộ lọc">&times; Bỏ lọc</button>
       </div>
     </nav>
@@ -269,6 +271,8 @@
                   <span id="modal-play-label">Phát nổi</span>
                 </button>
                 <button id="modal-fav-btn" class="modal-fav-btn" title="Thêm vào danh sách của tôi" type="button">+ Danh sách</button>
+                <button id="modal-watched-btn" class="modal-fav-btn" type="button" aria-pressed="false">Đánh dấu đã xem</button>
+                <button id="modal-hide-btn" class="modal-fav-btn" type="button" title="Không quan tâm: ẩn phim này khỏi mọi danh sách">Ẩn phim</button>
               </div>
             </div>
           </div>
@@ -364,6 +368,18 @@
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
             <span>Tìm kiếm phim tức thì</span>
             <kbd style="padding: 2px 7px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; font-family: monospace; font-size: 11px;">/</kbd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
+            <span>Đánh dấu đã xem / chưa xem (phim đang chọn)</span>
+            <kbd style="padding: 2px 7px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; font-family: monospace; font-size: 11px;">W</kbd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
+            <span>Ẩn phim đang chọn (hoàn tác ở thông báo)</span>
+            <kbd style="padding: 2px 7px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; font-family: monospace; font-size: 11px;">H</kbd>
+          </div>
+          <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
+            <span>Mở menu tùy chọn của phim</span>
+            <kbd style="padding: 2px 7px; background: rgba(255,255,255,0.1); border: 1px solid rgba(255,255,255,0.2); border-radius: 4px; font-family: monospace; font-size: 11px;">Chuột phải / ⇧F10</kbd>
           </div>
           <div style="display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.08);">
             <span>Bật / Tắt xuyên chuột (Ghost Mode)</span>
