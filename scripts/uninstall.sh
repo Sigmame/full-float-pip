@@ -11,23 +11,32 @@ echo "VibeFloat — Uninstaller"
 echo "======================="
 echo ""
 
-INSTALL_DIR="$HOME/Library/Application Support/FloatVideo"
+APP="$HOME/Applications/VibeFloat.app"
+DATA_DIR="$HOME/Library/Application Support/FloatVideo"
 KEEP="catalog-storage.json"
 
-if pgrep -f "$INSTALL_DIR/VibeFloat.app" >/dev/null 2>&1; then
+if pgrep -f "VibeFloat.app/Contents/MacOS/FloatVideo" >/dev/null 2>&1; then
     echo "VibeFloat is running. Quit it (⌘Q) first, then run this again."
     exit 1
 fi
 
-if [ ! -d "$INSTALL_DIR" ]; then
-    echo "Not found: $INSTALL_DIR (nothing to remove)"
-elif [ "$1" = "--purge" ]; then
-    rm -rf "$INSTALL_DIR"
-    echo "Removed: $INSTALL_DIR (including your saved lists)"
+if [ -d "$APP" ]; then
+    rm -rf "$APP"
+    echo "Removed: $APP"
 else
-    find "$INSTALL_DIR" -mindepth 1 -maxdepth 1 ! -name "$KEEP" -exec rm -rf {} +
-    echo "Removed the app from: $INSTALL_DIR"
-    [ -f "$INSTALL_DIR/$KEEP" ] && echo "Kept your saved lists: $INSTALL_DIR/$KEEP   (run with --purge to delete them too)"
+    echo "Not found: $APP (nothing to remove there)"
+fi
+
+if [ ! -d "$DATA_DIR" ]; then
+    echo "No data folder: $DATA_DIR"
+elif [ "$1" = "--purge" ]; then
+    rm -rf "$DATA_DIR"
+    echo "Removed: $DATA_DIR (including your saved lists)"
+else
+    # The app of earlier versions lived here too; take it, and everything else, but keep the saved lists.
+    find "$DATA_DIR" -mindepth 1 -maxdepth 1 ! -name "$KEEP" -exec rm -rf {} +
+    echo "Cleaned: $DATA_DIR"
+    [ -f "$DATA_DIR/$KEEP" ] && echo "Kept your saved lists: $DATA_DIR/$KEEP   (run with --purge to delete them too)"
 fi
 
 # Files from the old Chrome setup, if they are still around.

@@ -30,10 +30,10 @@ xcode-select --install                      # 如果还没有命令行工具，�
 git clone https://github.com/Sigmame/full-float-pip.git
 cd full-float-pip
 ./scripts/install.sh
-open "$HOME/Library/Application Support/FloatVideo/VibeFloat.app"
+open -a VibeFloat
 ```
 
-脚本会编译应用，把它安装到 `~/Library/Application Support/FloatVideo/`（目录界面在应用包内），为本机做临时签名，并清除旧的 Chrome 方案留下的文件。重新安装后请退出应用（⌘Q）再重新打开。卸载：`./scripts/uninstall.sh`（保留你保存的列表；`--purge` 会一并删除）。
+脚本会编译应用，把它安装到 `~/Applications/VibeFloat.app`（目录界面和图标都在应用包内，所以它会出现在启动台、聚焦搜索和访达中），为本机做临时签名，并清除旧的 Chrome 方案留下的文件，包括 Application Support 里的旧副本。重新安装前请先退出应用（⌘Q）。你保存的列表和缓存仍在 `~/Library/Application Support/FloatVideo/`。卸载：`./scripts/uninstall.sh`（保留你保存的列表；`--purge` 会一并删除）。
 
 ## 使用
 

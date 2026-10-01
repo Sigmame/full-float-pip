@@ -30,10 +30,10 @@ xcode-select --install                      # once, if you have no Command Line 
 git clone https://github.com/Sigmame/full-float-pip.git
 cd full-float-pip
 ./scripts/install.sh
-open "$HOME/Library/Application Support/FloatVideo/VibeFloat.app"
+open -a VibeFloat
 ```
 
-The script compiles the app, installs it to `~/Library/Application Support/FloatVideo/` with the catalogue inside the bundle, signs it ad hoc for this Mac, and removes the files the old Chrome setup left behind. Quit the app (⌘Q) and open it again after reinstalling. To remove it: `./scripts/uninstall.sh` (keeps your saved lists; `--purge` deletes them too).
+The script compiles the app, installs it to `~/Applications/VibeFloat.app` with the catalogue and the icon inside the bundle (so it appears in Launchpad, Spotlight and Finder), signs it ad hoc for this Mac, and removes what the old Chrome setup left behind, including the old copy in Application Support. Quit the app (⌘Q) before reinstalling. Your saved lists and caches stay in `~/Library/Application Support/FloatVideo/`. To remove the app: `./scripts/uninstall.sh` (keeps your saved lists; `--purge` deletes them too).
 
 ## Using it
 
