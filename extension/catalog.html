@@ -133,6 +133,7 @@
 
         <button class="cat-btn cat-fav" data-cat="favorites">Danh sách của tôi</button>
         <button class="cat-btn cat-personal" data-cat="watched">Đã xem</button>
+        <button class="cat-btn cat-personal" data-cat="youtube">Phim YouTube</button>
         <button class="cat-btn cat-personal" data-cat="hidden">Đã ẩn</button>
         <button id="btn-clear-filters" class="cat-btn cat-clear-filters hidden" type="button" title="Xóa bộ lọc">&times; Bỏ lọc</button>
       </div>
@@ -204,6 +205,25 @@
       </div>
 
       <!-- 2. Category / Search Grid View (When browsing a specific category or searching) -->
+      <div id="youtube-view" class="youtube-view hidden">
+        <div class="section-header">
+          <div class="section-title-wrap">
+            <h2>Phim thuyết minh trên YouTube</h2>
+            <span id="youtube-count" class="result-count" role="status"></span>
+          </div>
+          <div class="section-controls">
+            <input id="youtube-search" class="youtube-search" type="search" aria-label="Tìm phim YouTube" placeholder="Tìm tên phim, diễn viên…" autocomplete="off">
+            <select id="youtube-filter" class="youtube-filter" aria-label="Lọc phim YouTube">
+              <option value="all">Tất cả</option>
+              <option value="hongkong">Diễn viên Hồng Kông</option>
+              <option value="vietnamese">Lồng tiếng Việt</option>
+            </select>
+          </div>
+        </div>
+        <p class="youtube-hint">Phim chọn sẵn · Chỉ tải video khi bạn bấm phát · Năm hiển thị là năm phim ra mắt</p>
+        <div id="youtube-grid" class="youtube-grid"></div>
+      </div>
+
       <div id="grid-view" class="grid-view hidden">
         <div class="section-header">
           <div class="section-title-wrap">

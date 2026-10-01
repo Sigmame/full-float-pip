@@ -115,6 +115,19 @@ function navigateView() {
     const homeView = document.getElementById('home-view');
     const gridView = document.getElementById('grid-view');
     const heroSpotlight = document.getElementById('hero-spotlight');
+    const youtubeView = document.getElementById('youtube-view');
+    youtubeView?.classList.add('hidden');
+
+    if (currentCategory === 'youtube' && !currentSearchKeyword) {
+        // The curated YouTube films are a fixed list, not a provider feed.
+        stopHeroRotation();
+        homeView?.classList.add('hidden');
+        gridView?.classList.add('hidden');
+        heroSpotlight?.classList.add('hidden');
+        youtubeView?.classList.remove('hidden');
+        renderYouTubeView();
+        return;
+    }
 
     if (currentSearchKeyword) {
         // Search View
@@ -144,6 +157,65 @@ function navigateView() {
 }
 
 // MARK: - UI Initialization
+// MARK: - YouTube films (a curated list: search, filter, float)
+
+function renderYouTubeView() {
+    const grid = document.getElementById('youtube-grid');
+    if (!grid) return;
+    const search = document.getElementById('youtube-search');
+    const filter = document.getElementById('youtube-filter');
+    if (search && !search.dataset.wired) {
+        search.dataset.wired = '1';
+        search.addEventListener('input', renderYouTubeView);
+        filter?.addEventListener('change', renderYouTubeView);
+    }
+    const movies = MovieService.getYouTubeMovies(search?.value || '', filter?.value || 'all');
+    const count = document.getElementById('youtube-count');
+    if (count) count.textContent = `${movies.length} phim`;
+    grid.innerHTML = movies.map((movie, index) => `
+        <article class="youtube-card">
+            <img src="${escapeAttr(movie.thumb)}" alt="" width="320" height="180" loading="lazy" referrerpolicy="no-referrer">
+            <div class="youtube-card-body">
+                <h3 class="youtube-card-title">${escapeHtml(movie.name)}</h3>
+                <p class="youtube-card-meta">${escapeHtml(`${movie.year} · ${movie.region} · ${movie.audio}`)}</p>
+                <p class="youtube-card-meta">${escapeHtml(movie.cast)}</p>
+                <p class="youtube-card-meta">${escapeHtml(`${movie.channel} · ${movie.durationMinutes} phút`)}</p>
+                <div class="youtube-card-actions">
+                    <button type="button" class="youtube-play" data-index="${index}">Phát nổi</button>
+                    <button type="button" class="youtube-open" data-index="${index}" title="Mở trên YouTube trong trình duyệt">YouTube ↗</button>
+                </div>
+            </div>
+        </article>`).join('') || '<p class="youtube-hint">Không có phim khớp. Thử tên khác hoặc chọn Tất cả.</p>';
+
+    grid.querySelectorAll('.youtube-play').forEach(button => {
+        button.addEventListener('click', async () => {
+            const movie = movies[Number(button.dataset.index)];
+            button.disabled = true;
+            button.textContent = 'Đang mở…';
+            try {
+                const result = await chrome.runtime.sendMessage({
+                    type: 'FLOAT_VIDEO_REQUEST',
+                    videoInfo: MovieService.buildYouTubeMovieFloatInfo(movie)
+                });
+                if (!result?.success) throw new Error(result?.error || 'Không mở được cửa sổ nổi.');
+                button.textContent = 'Đang phát';
+                showToast(`Đã phát nổi “${movie.name}”`);
+            } catch (error) {
+                button.textContent = 'Thử lại';
+                showToast(`${error.message} Có thể mở bằng nút YouTube bên cạnh.`);
+            } finally {
+                button.disabled = false;
+            }
+        });
+    });
+    grid.querySelectorAll('.youtube-open').forEach(button => {
+        button.addEventListener('click', () => {
+            const movie = movies[Number(button.dataset.index)];
+            chrome.runtime.sendMessage({ type: 'OPEN_YOUTUBE', id: movie.id }).catch(() => {});
+        });
+    });
+}
+
 // MARK: - Watched / hidden marks
 
 const cardSelector = slug => `.movie-card[data-slug="${CSS.escape(slug)}"]`;

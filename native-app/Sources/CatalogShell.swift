@@ -195,6 +195,17 @@ extension AppDelegate: CatalogBridgeDelegate {
                 completion(["success": true, "title": request["title"] as? String ?? ""])
             }
 
+        case "OPEN_YOUTUBE":
+            // "YouTube ↗" on a curated film: the address is built here from a validated id, never taken from the page.
+            let id = message["id"] as? String ?? ""
+            guard id.range(of: "^[A-Za-z0-9_-]{11}$", options: .regularExpression) != nil,
+                  let url = URL(string: "https://www.youtube.com/watch?v=\(id)") else {
+                completion(["success": false, "error": "Invalid video id"])
+                return
+            }
+            NSWorkspace.shared.open(url)
+            completion(["success": true])
+
         case "CLOSE_FLOAT":
             closeFloatWindow()
             completion(["success": true])
