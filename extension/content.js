@@ -5,34 +5,62 @@
   class VideoDetector {
     constructor() {
       this.detectedVideos = [];
+      this.mainVideo = null;
       this.observer = null;
     }
 
-    // Detect all <video> elements on the page
-    scanForVideos() {
-      const videos = document.querySelectorAll('video');
-      this.detectedVideos = [];
+    collectVideos(root) {
+      const videos = [];
+      for (const element of root.querySelectorAll('*')) {
+        if (element.tagName === 'VIDEO') videos.push(element);
+        if (element.shadowRoot) videos.push(...this.collectVideos(element.shadowRoot));
+      }
+      return videos;
+    }
 
-      videos.forEach((video, index) => {
+    scanForVideos() {
+      const videos = this.collectVideos(document);
+      this.detectedVideos = [];
+      this.mainVideo = null;
+      let mainPlaying = false;
+      let mainArea = 0;
+      let mainRect = null;
+
+      videos.forEach((video) => {
         const rect = video.getBoundingClientRect();
         // Filter out videos that are too small (usually ads or preview thumbnails)
-        if (rect.width < 100 || rect.height < 60) return;
+        if (rect.width < 100 || rect.height < 60 || video.readyState < 2) return;
 
-        const info = {
-          index,
+        const playing = !video.paused && !video.ended;
+        const visibleWidth = Math.min(rect.right, window.innerWidth) - Math.max(rect.left, 0);
+        const visibleHeight = Math.min(rect.bottom, window.innerHeight) - Math.max(rect.top, 0);
+        const area = Math.max(0, visibleWidth) * Math.max(0, visibleHeight);
+        if (!area && !playing) return;
+
+        if (mainPlaying && !playing) return;
+        if (playing === mainPlaying && area <= mainArea) return;
+
+        this.mainVideo = video;
+        mainPlaying = playing;
+        mainArea = area;
+        mainRect = rect;
+      });
+
+      const video = this.mainVideo;
+      if (video) {
+        this.detectedVideos = [{
           src: this._extractSource(video),
           embedUrl: this._getEmbedUrl(),
-          width: video.videoWidth || Math.round(rect.width),
-          height: video.videoHeight || Math.round(rect.height),
+          width: video.videoWidth || Math.round(mainRect.width),
+          height: video.videoHeight || Math.round(mainRect.height),
           duration: video.duration || 0,
           currentTime: video.currentTime || 0,
           paused: video.paused,
           title: this._getVideoTitle(),
           pageUrl: window.location.href,
           site: this._detectSite(),
-        };
-        this.detectedVideos.push(info);
-      });
+        }];
+      }
 
       return this.detectedVideos;
     }
@@ -205,26 +233,13 @@
     }
 
     if (message.type === 'FLOAT_VIDEO') {
-      const { videoIndex } = message;
-      const videoElements = document.querySelectorAll('video');
-      // Find the corresponding visible video
-      let visibleIndex = 0;
-      let targetVideo = null;
-      for (const video of videoElements) {
-        const rect = video.getBoundingClientRect();
-        if (rect.width < 100 || rect.height < 60) continue;
-        if (visibleIndex === videoIndex) {
-          targetVideo = video;
-          break;
-        }
-        visibleIndex++;
-      }
+      if (!detector.mainVideo?.isConnected) detector.scanForVideos();
 
-      if (targetVideo) {
-        targetVideo.pause();
+      if (detector.mainVideo) {
+        detector.mainVideo.pause();
         sendResponse({
           success: true,
-          videoInfo: detector.detectedVideos[videoIndex],
+          videoInfo: detector.detectedVideos[0],
         });
       } else {
         sendResponse({ success: false, error: 'Video not found' });

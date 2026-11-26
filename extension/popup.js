@@ -83,10 +83,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const playerPrefs = await capturePlayerPrefs(tab.id, video.site);
 
                     // Pause the original video
-                    await chrome.tabs.sendMessage(tab.id, {
-                        type: 'FLOAT_VIDEO',
-                        videoIndex: index,
-                    });
+                    await chrome.tabs.sendMessage(tab.id, { type: 'FLOAT_VIDEO' });
 
                     // Request background to launch native app
                     const result = await chrome.runtime.sendMessage({
