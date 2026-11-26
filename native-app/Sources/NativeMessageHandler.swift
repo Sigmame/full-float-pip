@@ -155,17 +155,14 @@ class NativeMessageHandler {
             do {
                 let jsonData = try JSONSerialization.data(withJSONObject: message)
 
-                // 1. Write 4-byte length prefix (little-endian)
                 var length = UInt32(jsonData.count)
                 let lengthData = Data(bytes: &length, count: 4)
 
-                // 2. Write JSON message body
-                self.outputHandle.write(lengthData)
-                self.outputHandle.write(jsonData)
+                try self.outputHandle.write(contentsOf: lengthData + jsonData)
 
                 NSLog("%@", "[FloatVideo] Sent message summary: \(self.summarizeOutgoingMessage(message))")
             } catch {
-                NSLog("%@", "[FloatVideo] Failed to serialize message: \(error)")
+                NSLog("%@", "[FloatVideo] Failed to send message: \(error)")
             }
         }
     }
