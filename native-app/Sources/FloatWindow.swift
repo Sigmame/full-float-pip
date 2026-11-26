@@ -941,11 +941,19 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             const initialTime = \(currentTime);
 
             function findMainVideo() {
-                const videos = Array.from(document.querySelectorAll('video'));
-                if (videos.length === 0) return null;
-                if (window.__floatVideoMainVideo && document.contains(window.__floatVideoMainVideo)) {
+                if (window.__floatVideoMainVideo && window.__floatVideoMainVideo.isConnected) {
                     return window.__floatVideoMainVideo;
                 }
+
+                const videos = [];
+                function collectVideos(root) {
+                    videos.push(...root.querySelectorAll('video'));
+                    root.querySelectorAll('*').forEach(el => {
+                        if (el.shadowRoot) collectVideos(el.shadowRoot);
+                    });
+                }
+                collectVideos(document);
+                if (videos.length === 0) return null;
 
                 let mainVideo = videos[0];
                 let maxArea = 0;
@@ -1036,6 +1044,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                         transform: none !important;
                         filter: none !important;
                         transition: none !important;
+                        /* contain: paint/strict makes the fixed video position against the ancestor (VK Video). */
+                        contain: none !important;
                     }
                     video.__floatvideo-main-video {
                         position: fixed !important;
@@ -1060,11 +1070,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     }
                     ${youtubeCss}
                 `;
+                return styleEl;
             }
 
-            function hideNonAncestors(element, ancestors, mainVideo) {
-                if (!element || !element.children) return;
-                Array.from(element.children).forEach(child => {
+            function hideNonAncestors(element, ancestors, mainVideo, shadowRoots) {
+                if (!element) return;
+                const root = shadowRoots.has(element.shadowRoot) ? element.shadowRoot : element;
+                if (!root.children) return;
+                Array.from(root.children).forEach(child => {
                     if (child === mainVideo) return;
                     if (ancestors.has(child)) {
                         child.style.setProperty('display', '', 'important');
@@ -1078,7 +1091,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                         child.style.setProperty('height', '100%', 'important');
                         child.style.setProperty('margin', '0', 'important');
                         child.style.setProperty('padding', '0', 'important');
-                        hideNonAncestors(child, ancestors, mainVideo);
+                        hideNonAncestors(child, ancestors, mainVideo, shadowRoots);
                     } else {
                         // Caption overlay DOM is a SIBLING of the <video>, not an
                         // ancestor — never hide it, or captions can't render.
@@ -1100,29 +1113,35 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 window.__floatVideoApplyingLayout = true;
 
                 try {
-                    ensureFloatVideoStyle();
+                    const styleEl = ensureFloatVideoStyle();
 
-                    document.querySelectorAll('.__floatvideo-ancestor').forEach(el => {
-                        el.classList.remove('__floatvideo-ancestor');
-                    });
-                    document.querySelectorAll('.__floatvideo-main-video').forEach(el => {
-                        el.classList.remove('__floatvideo-main-video');
+                    (window.__floatVideoLayoutElements || []).forEach(el => {
+                        el.classList.remove('__floatvideo-ancestor', '__floatvideo-main-video');
                     });
 
                     const ancestors = new Set();
+                    const shadowRoots = new Set();
                     let current = mainVideo;
                     while (current) {
                         ancestors.add(current);
                         if (current.classList) {
                             current.classList.add('__floatvideo-ancestor');
                         }
-                        current = current.parentElement;
+                        const parent = current.parentNode;
+                        if (parent instanceof ShadowRoot) shadowRoots.add(parent);
+                        current = current.parentElement || (parent instanceof ShadowRoot ? parent.host : null);
                     }
+                    window.__floatVideoLayoutElements = Array.from(ancestors);
+                    shadowRoots.forEach(root => {
+                        if (!root.getElementById('__floatvideo-style')) {
+                            root.appendChild(styleEl.cloneNode(true));
+                        }
+                    });
 
                     document.documentElement.style.cssText = 'margin:0!important;padding:0!important;overflow:hidden!important;background:#000!important;width:100%!important;height:100%!important;';
                     document.body.style.cssText = 'margin:0!important;padding:0!important;overflow:hidden!important;background:#000!important;width:100%!important;height:100%!important;';
 
-                    hideNonAncestors(document.body, ancestors, mainVideo);
+                    hideNonAncestors(document.body, ancestors, mainVideo, shadowRoots);
 
                     if (site === 'youtube') {
                         ancestors.forEach(el => {
@@ -1549,7 +1568,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let mutedJSBool = wantMute ? "true" : "false"
         let ytMuteCmd = wantMute ? "'mute'" : "'unmute'"
         let js = """
-        document.querySelectorAll('video').forEach(v => {
+        var videos = Array.from(document.querySelectorAll('video'));
+        var mainVideo = \(Self.mainVideoJS);
+        if (mainVideo && !videos.includes(mainVideo)) videos.push(mainVideo);
+        videos.forEach(v => {
             v.muted = \(mutedJSBool);
             if (!\(mutedJSBool)) v.volume = 1.0;
             v.play().catch(() => {});
@@ -1650,8 +1672,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         }
     }
 
+    private static let mainVideoJS = "(window.__floatVideoMainVideo && window.__floatVideoMainVideo.isConnected ? window.__floatVideoMainVideo : document.querySelector('video'))"
+
     private func videoJS(_ directJS: String, youtubeCmd: String? = nil) {
-        var js = "var v = document.querySelector('video'); if(v) { \(directJS) }"
+        var js = "var v = \(Self.mainVideoJS); if(v) { \(directJS) }"
         if let cmd = youtubeCmd {
             js += " else if(window.playerCommand) { \(cmd) }"
         }
@@ -1698,7 +1722,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
     private func seekTo(percent: Double) {
         let js = """
-        var v = document.querySelector('video');
+        var v = \(Self.mainVideoJS);
         if (v && v.duration) { v.currentTime = v.duration * \(percent); }
         else if (window.getPlayerState && window.playerCommand) {
             var s = window.getPlayerState();
@@ -1724,7 +1748,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     (function(req) {
         var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
         var yt = !!(p && typeof p.getAvailableAudioTracks === 'function' && typeof p.getOption === 'function');
-        var video = window.__floatVideoMainVideo || document.querySelector('video');
+        var video = \(mainVideoJS);
 
         function inAd() {
             return !!(p && p.classList && (p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')));
@@ -2191,7 +2215,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     private func pollVideoState() {
         let js = """
         (function() {
-            var v = document.querySelector('video');
+            var v = \(Self.mainVideoJS);
             if (v) {
                 // Consume any pending trusted-click request atomically with the
                 // current ad state so the native side never fires a stale click
