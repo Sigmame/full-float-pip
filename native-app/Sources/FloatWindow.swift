@@ -1568,23 +1568,25 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let mutedJSBool = wantMute ? "true" : "false"
         let ytMuteCmd = wantMute ? "'mute'" : "'unmute'"
         let js = """
-        var videos = Array.from(document.querySelectorAll('video'));
-        var mainVideo = \(Self.mainVideoJS);
-        if (mainVideo && !videos.includes(mainVideo)) videos.push(mainVideo);
-        videos.forEach(v => {
-            v.muted = \(mutedJSBool);
-            if (!\(mutedJSBool)) v.volume = 1.0;
-            v.play().catch(() => {});
-        });
-        if (window.playerCommand) {
-            window.playerCommand(\(ytMuteCmd));
-            if (!\(mutedJSBool)) window.playerCommand('volume', 1.0);
-            window.playerCommand('play');
-        }
-        var iframe = document.querySelector('iframe');
-        if (iframe) {
-            iframe.contentWindow.postMessage(JSON.stringify({event:'command',func:'playVideo',args:[]}), '*');
-        }
+        (function() {
+            var videos = Array.from(document.querySelectorAll('video'));
+            var mainVideo = \(Self.mainVideoJS);
+            if (mainVideo && !videos.includes(mainVideo)) videos.push(mainVideo);
+            videos.forEach(v => {
+                v.muted = \(mutedJSBool);
+                if (!\(mutedJSBool)) v.volume = 1.0;
+                v.play().catch(() => {});
+            });
+            if (window.playerCommand) {
+                window.playerCommand(\(ytMuteCmd));
+                if (!\(mutedJSBool)) window.playerCommand('volume', 1.0);
+                window.playerCommand('play');
+            }
+            var iframe = document.querySelector('iframe');
+            if (iframe) {
+                iframe.contentWindow.postMessage(JSON.stringify({event:'command',func:'playVideo',args:[]}), '*');
+            }
+        })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
         // Delayed retry (YouTube iframe may not be ready yet)
@@ -1675,10 +1677,11 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     private static let mainVideoJS = "(window.__floatVideoMainVideo && window.__floatVideoMainVideo.isConnected ? window.__floatVideoMainVideo : document.querySelector('video'))"
 
     private func videoJS(_ directJS: String, youtubeCmd: String? = nil) {
-        var js = "var v = \(Self.mainVideoJS); if(v) { \(directJS) }"
+        var js = "(function() { var v = \(Self.mainVideoJS); if(v) { \(directJS) }"
         if let cmd = youtubeCmd {
             js += " else if(window.playerCommand) { \(cmd) }"
         }
+        js += " })();"
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
@@ -1722,12 +1725,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
     private func seekTo(percent: Double) {
         let js = """
-        var v = \(Self.mainVideoJS);
-        if (v && v.duration) { v.currentTime = v.duration * \(percent); }
-        else if (window.getPlayerState && window.playerCommand) {
-            var s = window.getPlayerState();
-            if (s) playerCommand('seek', s.dur * \(percent));
-        }
+        (function() {
+            var v = \(Self.mainVideoJS);
+            if (v && v.duration) { v.currentTime = v.duration * \(percent); }
+            else if (window.getPlayerState && window.playerCommand) {
+                var s = window.getPlayerState();
+                if (s) playerCommand('seek', s.dur * \(percent));
+            }
+        })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
