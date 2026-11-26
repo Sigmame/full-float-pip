@@ -77,11 +77,6 @@ document.addEventListener('DOMContentLoaded', async () => {
                 button.textContent = '⏳ Connecting...';
 
                 try {
-                    // Capture the tab's player settings (caption track incl.
-                    // auto-translate, playback rate, yt-player-* localStorage)
-                    // so the floating window can reproduce them.
-                    const playerPrefs = await capturePlayerPrefs(tab.id, video.site);
-
                     // Pause the original video
                     await chrome.tabs.sendMessage(tab.id, { type: 'FLOAT_VIDEO' });
 
@@ -89,7 +84,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                     const result = await chrome.runtime.sendMessage({
                         type: 'FLOAT_VIDEO_REQUEST',
                         videoInfo: video,
-                        playerPrefs,
+                        tabId: tab.id,
                     });
 
                     if (result?.success) {
@@ -114,79 +109,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 });
-
-// Captures YouTube player settings from the tab so the floating window can
-// mirror them: audio track (dubbed videos), active caption track (incl.
-// auto-translate target) or captions explicitly off, playback rate, and all
-// yt-player-* localStorage (sticky captions/quality/volume).
-// Runs in the page's MAIN world because the player API lives on the page's
-// #movie_player element, out of reach of the isolated content-script world.
-async function capturePlayerPrefs(tabId, site) {
-    if (site !== 'youtube') return null;
-    try {
-        const [res] = await chrome.scripting.executeScript({
-            target: { tabId },
-            world: 'MAIN',
-            func: () => {
-                const out = {
-                    localStorage: {}, captionTrack: null, captionsOff: false,
-                    audioTrack: null, playbackRate: 1,
-                };
-                try {
-                    for (let i = 0; i < localStorage.length; i++) {
-                        const k = localStorage.key(i);
-                        if (k && k.indexOf('yt-player-') === 0) {
-                            out.localStorage[k] = localStorage.getItem(k);
-                        }
-                    }
-                } catch (e) {}
-                try {
-                    const p = document.getElementById('movie_player');
-                    // During an ad the player reports the AD's tracks; capturing
-                    // then would mirror the wrong state (e.g. "captions off").
-                    const inAd = !!(p && p.classList &&
-                        (p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')));
-                    if (p && !inAd && typeof p.getOption === 'function') {
-                        const t = p.getOption('captions', 'track');
-                        if (t && t.languageCode) {
-                            out.captionTrack = { languageCode: t.languageCode };
-                            if (t.kind) out.captionTrack.kind = t.kind;
-                            if (t.vss_id) out.captionTrack.vssId = t.vss_id;
-                            if (t.translationLanguage && t.translationLanguage.languageCode) {
-                                out.captionTrack.translationLanguage = {
-                                    languageCode: t.translationLanguage.languageCode,
-                                };
-                            }
-                        } else {
-                            // Explicit "off": otherwise the floating window keeps
-                            // whatever captions YouTube auto-enables there.
-                            out.captionsOff = true;
-                        }
-                    }
-                    if (p && !inAd && typeof p.getAudioTrack === 'function' &&
-                        typeof p.getAvailableAudioTracks === 'function') {
-                        const cur = p.getAudioTrack();
-                        const info = cur && typeof cur.getLanguageInfo === 'function'
-                            ? cur.getLanguageInfo() : null;
-                        // Only dubbed (multi-track) videos have a choice to mirror;
-                        // the float window's different language would otherwise
-                        // make YouTube pick another (often auto-dubbed) track.
-                        if ((p.getAvailableAudioTracks() || []).length > 1 && info && info.id) {
-                            out.audioTrack = { id: info.id };
-                        }
-                    }
-                    if (p && typeof p.getPlaybackRate === 'function') {
-                        out.playbackRate = p.getPlaybackRate();
-                    }
-                } catch (e) {}
-                return out;
-            },
-        });
-        return res?.result || null;
-    } catch (e) {
-        return null; // non-fatal: float without prefs
-    }
-}
 
 function escapeHtml(text) {
     const div = document.createElement('div');

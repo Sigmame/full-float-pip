@@ -12,6 +12,78 @@ function isYouTubeUrl(url) {
     }
 }
 
+// Captures YouTube player settings from the tab so the floating window can
+// mirror them: audio track (dubbed videos), active caption track (incl.
+// auto-translate target) or captions explicitly off, playback rate, and all
+// yt-player-* localStorage (sticky captions/quality/volume).
+// Runs in the page's MAIN world because the player API lives on the page's
+// #movie_player element, out of reach of the isolated content-script world.
+async function capturePlayerPrefs(tabId) {
+    try {
+        const [res] = await chrome.scripting.executeScript({
+            target: { tabId },
+            world: 'MAIN',
+            func: () => {
+                const out = {
+                    localStorage: {}, captionTrack: null, captionsOff: false,
+                    audioTrack: null, playbackRate: 1,
+                };
+                try {
+                    for (let i = 0; i < localStorage.length; i++) {
+                        const k = localStorage.key(i);
+                        if (k && k.indexOf('yt-player-') === 0) {
+                            out.localStorage[k] = localStorage.getItem(k);
+                        }
+                    }
+                } catch (e) {}
+                try {
+                    const p = document.getElementById('movie_player');
+                    // During an ad the player reports the AD's tracks; capturing
+                    // then would mirror the wrong state (e.g. "captions off").
+                    const inAd = !!(p && p.classList &&
+                        (p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')));
+                    if (p && !inAd && typeof p.getOption === 'function') {
+                        const t = p.getOption('captions', 'track');
+                        if (t && t.languageCode) {
+                            out.captionTrack = { languageCode: t.languageCode };
+                            if (t.kind) out.captionTrack.kind = t.kind;
+                            if (t.vss_id) out.captionTrack.vssId = t.vss_id;
+                            if (t.translationLanguage && t.translationLanguage.languageCode) {
+                                out.captionTrack.translationLanguage = {
+                                    languageCode: t.translationLanguage.languageCode,
+                                };
+                            }
+                        } else {
+                            // Explicit "off": otherwise the floating window keeps
+                            // whatever captions YouTube auto-enables there.
+                            out.captionsOff = true;
+                        }
+                    }
+                    if (p && !inAd && typeof p.getAudioTrack === 'function' &&
+                        typeof p.getAvailableAudioTracks === 'function') {
+                        const cur = p.getAudioTrack();
+                        const info = cur && typeof cur.getLanguageInfo === 'function'
+                            ? cur.getLanguageInfo() : null;
+                        // Only dubbed (multi-track) videos have a choice to mirror;
+                        // the float window's different language would otherwise
+                        // make YouTube pick another (often auto-dubbed) track.
+                        if ((p.getAvailableAudioTracks() || []).length > 1 && info && info.id) {
+                            out.audioTrack = { id: info.id };
+                        }
+                    }
+                    if (p && typeof p.getPlaybackRate === 'function') {
+                        out.playbackRate = p.getPlaybackRate();
+                    }
+                } catch (e) {}
+                return out;
+            },
+        });
+        return res?.result || null;
+    } catch (e) {
+        return null; // non-fatal: float without prefs
+    }
+}
+
 class FloatVideoManager {
     constructor() {
         this.nativePort = null;
@@ -50,7 +122,7 @@ class FloatVideoManager {
     }
 
     // Send float video command to Native App
-    async floatVideo(videoInfo, playerPrefs) {
+    async floatVideo(videoInfo, tabId) {
         // Prevent duplicate requests from rapid double-clicks
         if (this.floatingInProgress) {
             return { success: false, error: 'Already opening a video' };
@@ -58,13 +130,13 @@ class FloatVideoManager {
         this.floatingInProgress = true;
 
         try {
-            return await this._doFloatVideo(videoInfo, playerPrefs);
+            return await this._doFloatVideo(videoInfo, tabId);
         } finally {
             this.floatingInProgress = false;
         }
     }
 
-    async _doFloatVideo(videoInfo, playerPrefs) {
+    async _doFloatVideo(videoInfo, tabId) {
         // ⭐ Restart the native process every time to ensure clean WKWebView state
         // macOS 12+ deprecated WKProcessPool, making in-process Web Content Process isolation impossible
         // The only reliable method is to restart the entire native app process
@@ -106,11 +178,13 @@ class FloatVideoManager {
             currentTime: videoInfo.currentTime || 0,
         };
 
-        const isYouTube = videoInfo.site === 'youtube' && isYouTubeUrl(videoInfo.pageUrl);
+        const tab = await chrome.tabs.get(tabId).catch(() => null);
+        const isYouTube = videoInfo.site === 'youtube' && isYouTubeUrl(tab?.url) && isYouTubeUrl(videoInfo.pageUrl);
+        const playerPrefs = isYouTube ? await capturePlayerPrefs(tabId) : null;
 
         // Player settings captured from the tab (captions/translate, rate,
         // sticky yt-player-* localStorage) — mirrored into the float window.
-        if (isYouTube && playerPrefs) {
+        if (playerPrefs) {
             message.playerPrefs = playerPrefs;
         }
 
@@ -197,7 +271,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 break;
             }
             (async () => {
-                const result = await manager.floatVideo(message.videoInfo, message.playerPrefs || null);
+                const result = await manager.floatVideo(message.videoInfo, message.tabId);
+                sendResponse(result);
+            })();
+            break;
+        }
+
+        case 'FLOAT_HOTKEY': {
+            if (!sender.tab) {
+                sendResponse({ success: false, error: 'Hotkey requests are only accepted from a tab' });
+                break;
+            }
+            (async () => {
+                const result = await manager.floatVideo(message.videoInfo, sender.tab.id);
                 sendResponse(result);
             })();
             break;

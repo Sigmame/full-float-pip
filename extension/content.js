@@ -224,6 +224,22 @@
     }
   }).observe(document, { subtree: true, childList: true });
 
+  document.addEventListener('keydown', (e) => {
+    if (!e.isTrusted || e.code !== 'KeyP' || e.ctrlKey || e.metaKey || e.altKey || e.shiftKey || e.repeat) return;
+    const target = e.composedPath()[0];
+    if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable) return;
+
+    const [video] = detector.scanForVideos();
+    if (!video || !chrome.runtime?.id) return;
+    const element = detector.mainVideo;
+
+    e.preventDefault();
+    e.stopPropagation();
+    chrome.runtime.sendMessage({ type: 'FLOAT_HOTKEY', videoInfo: video }).then(r => {
+      if (r?.success) element.pause();
+    }).catch(() => { });
+  }, true);
+
   // Handle messages from popup/background
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === 'GET_VIDEOS') {
