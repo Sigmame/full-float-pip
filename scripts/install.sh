@@ -47,29 +47,35 @@ exec "$INSTALL_DIR/FloatVideo" --native-messaging 2>>"\$LOG_FILE"
 HOSTEOF
 chmod +x "$INSTALL_DIR/float_video_host.sh"
 
-# ---- Step 4: Configure Chrome Native Messaging Host ----
-NATIVE_HOST_DIR="$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts"
-mkdir -p "$NATIVE_HOST_DIR"
+# ---- Step 4: Configure Native Messaging Host (Chrome, plus Brave if installed) ----
 
 # Get Extension ID
 echo ""
 echo "[4/4] Configuring extension association..."
 echo ""
-echo "  Please install the Chrome extension first:"
-echo "  1. Open Chrome -> chrome://extensions"
+echo "  Please install the extension first:"
+echo "  1. Open chrome://extensions (Brave: brave://extensions)"
 echo "  2. Enable 'Developer mode'"
 echo "  3. Click 'Load unpacked'"
 echo "  4. Select: $PROJECT_DIR/extension"
 echo "  5. Copy the Extension ID (e.g.: abcdefghijklmnopabcdefghijklmnop)"
 echo ""
-read -p "  Enter Chrome Extension ID: " EXT_ID
+read -p "  Enter Extension ID: " EXT_ID
 
 if ! [[ "$EXT_ID" =~ ^[a-p]{32}$ ]]; then
-    echo "Invalid extension ID: expected 32 characters a-p (copy it from chrome://extensions)"
+    echo "Invalid extension ID: expected 32 characters a-p (copy it from the extensions page)"
     exit 1
 fi
 
-cat > "$NATIVE_HOST_DIR/com.aspect.floatvideo.json" << EOF
+NATIVE_HOST_DIRS=("$HOME/Library/Application Support/Google/Chrome/NativeMessagingHosts")
+BRAVE_DIR="$HOME/Library/Application Support/BraveSoftware/Brave-Browser"
+if [ -d "$BRAVE_DIR" ]; then
+    NATIVE_HOST_DIRS+=("$BRAVE_DIR/NativeMessagingHosts")
+fi
+
+for NATIVE_HOST_DIR in "${NATIVE_HOST_DIRS[@]}"; do
+    mkdir -p "$NATIVE_HOST_DIR"
+    cat > "$NATIVE_HOST_DIR/com.aspect.floatvideo.json" << EOF
 {
   "name": "com.aspect.floatvideo",
   "description": "Float Video native messaging host",
@@ -80,6 +86,7 @@ cat > "$NATIVE_HOST_DIR/com.aspect.floatvideo.json" << EOF
   ]
 }
 EOF
+done
 
 echo ""
 echo "================================="
@@ -87,13 +94,15 @@ echo "Installation complete!"
 echo "================================="
 echo ""
 echo "  Native app: $INSTALL_DIR/FloatVideo"
-echo "  Messaging manifest: $NATIVE_HOST_DIR/com.aspect.floatvideo.json"
+for NATIVE_HOST_DIR in "${NATIVE_HOST_DIRS[@]}"; do
+    echo "  Messaging manifest: $NATIVE_HOST_DIR/com.aspect.floatvideo.json"
+done
 echo "  Host stderr log: $HOME/Library/Logs/FloatVideo/native-host.log"
-echo "  Chrome extension: $PROJECT_DIR/extension"
+echo "  Extension: $PROJECT_DIR/extension"
 echo ""
 echo "  Usage:"
 echo "  1. Open any video site (YouTube, Bilibili, etc.)"
-echo "  2. Click the Float Video icon in Chrome toolbar"
+echo "  2. Click the Float Video icon in the browser toolbar"
 echo "  3. Select a video and click 'Float'"
 echo "  4. The video will play in a floating window, always on top"
 echo ""

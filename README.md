@@ -73,7 +73,7 @@ No window switching. No split screen. No leaving fullscreen. Just code and video
 ### Requirements
 
 - macOS 12 (Monterey) or later
-- Google Chrome
+- Google Chrome or Brave
 - Xcode Command Line Tools
 
 ### Steps
