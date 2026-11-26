@@ -2329,6 +2329,22 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     }
 
     private func cursorForEdge(_ edge: ResizeEdge) -> NSCursor {
+        // Older Swift toolchains lack the macOS 15 SDK's frameResize API.
+        #if compiler(>=6.0)
+        if #available(macOS 15, *) {
+            switch edge {
+            case .left: return .frameResize(position: .left, directions: .all)
+            case .right: return .frameResize(position: .right, directions: .all)
+            case .top: return .frameResize(position: .top, directions: .all)
+            case .bottom: return .frameResize(position: .bottom, directions: .all)
+            case .topLeft: return .frameResize(position: .topLeft, directions: .all)
+            case .topRight: return .frameResize(position: .topRight, directions: .all)
+            case .bottomLeft: return .frameResize(position: .bottomLeft, directions: .all)
+            case .bottomRight: return .frameResize(position: .bottomRight, directions: .all)
+            case .none: return .arrow
+            }
+        }
+        #endif
         switch edge {
         case .left, .right: return .resizeLeftRight
         case .top, .bottom: return .resizeUpDown
@@ -2342,6 +2358,18 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
+        case .mouseMoved, .cursorUpdate:
+            if isResizing {
+                cursorForEdge(resizeEdge).set()
+                return
+            }
+            let location = event.locationInWindow
+            let edge = detectResizeEdge(at: location)
+            if edge != .none,
+               !(edge == .top && titleBarView.alphaValue > 0 && titleBarView.frame.contains(location)) {
+                cursorForEdge(edge).set()
+                return
+            }
         case .leftMouseDown:
             // Synthetic trusted clicks (ad skip) must reach the web view even
             // when they land inside the resize border.
@@ -2350,12 +2378,13 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             let edge = detectResizeEdge(at: location)
             if edge != .none {
                 // When title bar is visible, drag takes priority over top-edge resize
-                if titleBarView.alphaValue > 0,
+                if edge == .top, titleBarView.alphaValue > 0,
                    titleBarView.frame.contains(location) {
                     break // Let DraggableTitleBar handle the drag
                 }
                 isResizing = true
                 resizeEdge = edge
+                cursorForEdge(edge).set()
                 initialMouseLocation = NSEvent.mouseLocation
                 initialWindowFrame = self.frame
                 return
@@ -2378,14 +2407,6 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
     // MARK: - Mouse Handling
 
-    override func mouseMoved(with event: NSEvent) {
-        // Show/hide driven by cursor polling; only update resize cursor here.
-        let location = event.locationInWindow
-        let edge = detectResizeEdge(at: location)
-        cursorForEdge(edge).set()
-        super.mouseMoved(with: event)
-    }
-
     override func mouseDown(with event: NSEvent) {
         // Resize handled by sendEvent interception, title bar drag handled by DraggableTitleBar
         super.mouseDown(with: event)
@@ -2396,6 +2417,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             super.mouseDragged(with: event)
             return
         }
+        cursorForEdge(resizeEdge).set()
 
         let currentMouse = NSEvent.mouseLocation
         let deltaX = currentMouse.x - initialMouseLocation.x
@@ -2415,6 +2437,16 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             newFrame.size.width = newFrame.size.height * videoAspectRatio
         case .none:
             break
+        }
+
+        switch resizeEdge {
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            let dh = (resizeEdge == .topLeft || resizeEdge == .topRight) ? deltaY : -deltaY
+            let verticalWidth = (initialWindowFrame.height + dh) * videoAspectRatio
+            if abs(verticalWidth - initialWindowFrame.width) > abs(newFrame.width - initialWindowFrame.width) {
+                newFrame.size.width = verticalWidth
+            }
+        default: break
         }
 
         // Horizontal/diagonal drag: derive height from width, maintain aspect ratio
