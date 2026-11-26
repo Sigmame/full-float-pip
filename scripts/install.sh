@@ -2,7 +2,7 @@
 # install.sh — Float Video one-click install script
 # Compile Swift native app and configure Chrome Native Messaging
 
-set -e
+set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
@@ -16,10 +16,8 @@ echo ""
 # ---- Step 1: Compile Swift app ----
 echo "[1/4] Compiling native app..."
 cd "$NATIVE_APP_DIR"
-swift build -c release 2>&1 | tail -5
-
 BUILD_OUTPUT="$NATIVE_APP_DIR/.build/release/FloatVideo"
-if [ ! -f "$BUILD_OUTPUT" ]; then
+if ! swift build -c release 2>&1 | tail -5; then
     echo "Compilation failed! Please check if Xcode Command Line Tools are installed."
     echo "   Run: xcode-select --install"
     exit 1
@@ -62,15 +60,13 @@ echo "  1. Open Chrome -> chrome://extensions"
 echo "  2. Enable 'Developer mode'"
 echo "  3. Click 'Load unpacked'"
 echo "  4. Select: $PROJECT_DIR/extension"
-echo "  5. Copy the Extension ID (e.g.: abcdefghijklmnopqrstuvwxyz)"
+echo "  5. Copy the Extension ID (e.g.: abcdefghijklmnopabcdefghijklmnop)"
 echo ""
 read -p "  Enter Chrome Extension ID: " EXT_ID
 
-if [ -z "$EXT_ID" ]; then
-    echo ""
-    echo "  Extension ID is empty, using wildcard (for development only)"
-    echo "  Please re-run this script to configure properly"
-    EXT_ID="*"
+if ! [[ "$EXT_ID" =~ ^[a-p]{32}$ ]]; then
+    echo "Invalid extension ID: expected 32 characters a-p (copy it from chrome://extensions)"
+    exit 1
 fi
 
 cat > "$NATIVE_HOST_DIR/com.aspect.floatvideo.json" << EOF

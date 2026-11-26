@@ -2,6 +2,16 @@
 
 const NATIVE_HOST_NAME = 'com.aspect.floatvideo';
 
+function isYouTubeUrl(url) {
+    try {
+        const parsed = new URL(url);
+        return parsed.protocol === 'https:' &&
+            (parsed.hostname === 'youtube.com' || parsed.hostname.endsWith('.youtube.com'));
+    } catch {
+        return false;
+    }
+}
+
 class FloatVideoManager {
     constructor() {
         this.nativePort = null;
@@ -96,14 +106,16 @@ class FloatVideoManager {
             currentTime: videoInfo.currentTime || 0,
         };
 
+        const isYouTube = videoInfo.site === 'youtube' && isYouTubeUrl(videoInfo.pageUrl);
+
         // Player settings captured from the tab (captions/translate, rate,
         // sticky yt-player-* localStorage) — mirrored into the float window.
-        if (videoInfo.site === 'youtube' && playerPrefs) {
+        if (isYouTube && playerPrefs) {
             message.playerPrefs = playerPrefs;
         }
 
         // Get YouTube cookies and attach to the message
-        if (videoInfo.site === 'youtube') {
+        if (isYouTube) {
             try {
                 const ytCookies = await chrome.cookies.getAll({ domain: '.youtube.com' });
                 const googleCookies = await chrome.cookies.getAll({ domain: '.google.com' });
@@ -180,6 +192,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         }
 
         case 'FLOAT_VIDEO_REQUEST': {
+            if (sender.tab) {
+                sendResponse({ success: false, error: 'Float requests are only accepted from the popup' });
+                break;
+            }
             (async () => {
                 const result = await manager.floatVideo(message.videoInfo, message.playerPrefs || null);
                 sendResponse(result);

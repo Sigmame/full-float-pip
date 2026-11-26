@@ -117,14 +117,15 @@
     // Detect current site
     _detectSite() {
       const host = window.location.hostname;
-      if (host.includes('youtube.com')) return 'youtube';
-      if (host.includes('bilibili.com')) return 'bilibili';
-      if (host.includes('youku.com')) return 'youku';
-      if (host.includes('iqiyi.com')) return 'iqiyi';
-      if (host.includes('netflix.com')) return 'netflix';
-      if (host.includes('v.qq.com')) return 'tencent';
-      if (host.includes('twitch.tv')) return 'twitch';
-      if (host.includes('douyin.com')) return 'douyin';
+      const matchesHost = domain => host === domain || host.endsWith('.' + domain);
+      if (matchesHost('youtube.com')) return 'youtube';
+      if (matchesHost('bilibili.com')) return 'bilibili';
+      if (matchesHost('youku.com')) return 'youku';
+      if (matchesHost('iqiyi.com')) return 'iqiyi';
+      if (matchesHost('netflix.com')) return 'netflix';
+      if (matchesHost('v.qq.com')) return 'tencent';
+      if (matchesHost('twitch.tv')) return 'twitch';
+      if (matchesHost('douyin.com')) return 'douyin';
       return 'generic';
     }
 

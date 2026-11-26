@@ -235,6 +235,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         // WKWebView (fills entire window, title bar overlays on top)
         let webConfig = WKWebViewConfiguration()
         webConfig.mediaTypesRequiringUserActionForPlayback = []
+        webConfig.websiteDataStore = .nonPersistent()
 
         let webFrame = NSRect(x: 0, y: 0, width: width, height: height)
         webView = WKWebView(frame: webFrame, configuration: webConfig)
@@ -486,7 +487,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             let audioDesc = (playerPrefs?["audioTrack"] as? [String: Any])?["id"] as? String ?? "default"
             let lsCount = (playerPrefs?["localStorage"] as? [String: Any])?.count ?? 0
             let rate = (playerPrefs?["playbackRate"] as? NSNumber)?.doubleValue ?? 1.0
-            NSLog("[FloatVideo] playerPrefs received: track=\(trackDesc) audio=\(audioDesc) lsKeys=\(lsCount) rate=\(rate)")
+            NSLog("%@", "[FloatVideo] playerPrefs received: track=\(trackDesc) audio=\(audioDesc) lsKeys=\(lsCount) rate=\(rate)")
         }
 
         // Suspend all media playback while overlay is visible, prevent audio during loading
@@ -497,7 +498,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             self.loadingStrategy = .directVideo
             let html = buildVideoHTML(videoSrc: videoSrc, currentTime: currentTime)
             webView.loadHTMLString(html, baseURL: URL(string: videoSrc))
-            NSLog("[FloatVideo] Loading direct video: \(videoSrc)")
+            NSLog("%@", "[FloatVideo] Loading direct video: \(logSafeURL(videoSrc))")
             return
         }
 
@@ -509,7 +510,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 let loadPage = { [weak self] in
                     self?.loadingStrategy = .fullPageInject
                     self?.webView.load(URLRequest(url: pageURL))
-                    NSLog("[FloatVideo] Loading YouTube full page for JS injection: \(url)")
+                    NSLog("%@", "[FloatVideo] Loading YouTube full page for JS injection: \(logSafeURL(url))")
                 }
 
                 if !cookies.isEmpty {
@@ -532,14 +533,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             self.loadingStrategy = .siteEmbed
             let html = buildEmbedHTML(embedUrl: embedUrl)
             webView.loadHTMLString(html, baseURL: nil)
-            NSLog("[FloatVideo] Loading embed via iframe: \(embedUrl)")
+            NSLog("%@", "[FloatVideo] Loading embed via iframe: \(logSafeURL(embedUrl))")
             return
         }
 
         // Priority 4: Load full page and inject JS
         if !url.isEmpty, let pageURL = URL(string: url) {
             webView.load(URLRequest(url: pageURL))
-            NSLog("[FloatVideo] Loading full page: \(url)")
+            NSLog("%@", "[FloatVideo] Loading full page: \(logSafeURL(url))")
         }
     }
 
@@ -565,6 +566,9 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             ]
             if secure {
                 properties[.secure] = "TRUE"
+            }
+            if cookieData["httpOnly"] as? Bool == true {
+                properties[HTTPCookiePropertyKey("HttpOnly")] = "TRUE"
             }
 
             if let cookie = HTTPCookie(properties: properties) {
@@ -615,7 +619,6 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         components.path = "/play"
         components.queryItems = [
             URLQueryItem(name: "v", value: videoId),
-            URLQueryItem(name: "site", value: "youtube"),
             URLQueryItem(name: "t", value: String(startSeconds)),
             URLQueryItem(name: "w", value: String(Int(safeViewport.width))),
             URLQueryItem(name: "h", value: String(Int(safeViewport.height))),
@@ -712,7 +715,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     private func attemptApplyPlayerPrefs(after delay: TimeInterval) {
         guard let deadline = prefsApplyDeadline else { return }
         guard Date() < deadline else {
-            NSLog("[FloatVideo] Player prefs give-up after 60s (last status: \(lastPrefsStatus))")
+            NSLog("%@", "[FloatVideo] Player prefs give-up after 60s (last status: \(lastPrefsStatus))")
             prefsApplyDeadline = nil
             return
         }
@@ -767,7 +770,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let js = "if (window.__floatVideoApplyLayout) { window.__floatVideoApplyLayout(); true } else { false }"
         webView.evaluateJavaScript(js) { [weak self] result, error in
             if let error = error {
-                NSLog("[FloatVideo] Layout refresh JS error: \(error)")
+                NSLog("%@", "[FloatVideo] Layout refresh JS error: \(logSafeError(error))")
                 return
             }
             if let ok = result as? Bool, !ok {
@@ -803,14 +806,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         loadingStrategy = .youtubeEmbed
         hasInjectedJS = false
         webView.load(URLRequest(url: fallbackURL))
-        NSLog("[FloatVideo] Switching YouTube to embed fallback (\(reason)): \(fallbackURL.absoluteString)")
+        NSLog("%@", "[FloatVideo] Switching YouTube to embed fallback (\(reason)): \(logSafeURL(fallbackURL.absoluteString))")
         return true
     }
 
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        NSLog("[FloatVideo] Page loaded (strategy: \(loadingStrategy), site: \(currentSite)), webView: \(webView.frame), container: \(self.contentView?.frame ?? .zero)")
+        NSLog("%@", "[FloatVideo] Page loaded (strategy: \(loadingStrategy), site: \(currentSite)), webView: \(webView.frame), container: \(self.contentView?.frame ?? .zero)")
 
         if loadingStrategy == .fullPageInject {
             // Full page load + JS inject: delay removing overlay after injection to let DOM operations complete
@@ -847,7 +850,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        NSLog("[FloatVideo] Page load failed: \(error)")
+        NSLog("%@", "[FloatVideo] Page load failed: \(logSafeError(error))")
         refreshYouTubeEmbedFallbackURLIfNeeded()
         if shouldUseYouTubeFullPagePrimary() && startYouTubeEmbedFallback(reason: "didFail") {
             return
@@ -856,12 +859,20 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        NSLog("[FloatVideo] Provisional page load failed: \(error)")
+        NSLog("%@", "[FloatVideo] Provisional page load failed: \(logSafeError(error))")
         refreshYouTubeEmbedFallbackURLIfNeeded()
         if shouldUseYouTubeFullPagePrimary() && startYouTubeEmbedFallback(reason: "didFailProvisional") {
             return
         }
         hideLoadingOverlay()
+    }
+
+    private func htmlEscaped(_ s: String) -> String {
+        return s.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     private func buildVideoHTML(videoSrc: String, currentTime: Double) -> String {
@@ -881,7 +892,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             }
         </style>
         </head><body>
-        <video src="\(videoSrc)" autoplay controls playsinline></video>
+        <video src="\(htmlEscaped(videoSrc))" autoplay controls playsinline></video>
         <script>
             const v = document.querySelector('video');
             v.currentTime = \(currentTime);
@@ -913,7 +924,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             }
         </style>
         </head><body>
-        <iframe src="\(embedUrl)"
+        <iframe src="\(htmlEscaped(embedUrl))"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 referrerpolicy="strict-origin-when-cross-origin"
                 allowfullscreen>
@@ -1182,7 +1193,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         """
         webView.evaluateJavaScript(js) { [weak self] result, err in
             if let err = err {
-                NSLog("[FloatVideo] JS injection error: \(err)")
+                NSLog("%@", "[FloatVideo] JS injection error: \(logSafeError(err))")
             } else if let found = result as? Bool, found {
                 self?.hasInjectedJS = true
                 self?.youtubeFallbackWorkItem?.cancel()
@@ -1409,7 +1420,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         """
         webView.evaluateJavaScript(js) { [weak self] result, err in
             if let err = err {
-                NSLog("[FloatVideo] Ad-skip guard injection error: \(err)")
+                NSLog("%@", "[FloatVideo] Ad-skip guard injection error: \(logSafeError(err))")
             } else {
                 self?.hasInjectedAdSkip = true
                 // Only log fresh installs; the poll-driven self-heal re-invokes
@@ -1991,7 +2002,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let js = "\(Self.mediaTracksJS)(JSON.parse(atob('\(data.base64EncodedString())')))"
         webView.evaluateJavaScript(js) { result, error in
             if let error = error {
-                NSLog("[FloatVideo] Media tracks JS error: \(error)")
+                NSLog("%@", "[FloatVideo] Media tracks JS error: \(logSafeError(error))")
             }
             completion?(result)
         }
@@ -2137,7 +2148,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         runMediaTracksJS(request) { result in
             let type = request["type"] as? String ?? "?"
             let id = request["id"] as? String ?? ""
-            NSLog("[FloatVideo] Track menu: \(type)=\(id.isEmpty ? "off" : id) -> \(result as? String ?? "nil")")
+            NSLog("%@", "[FloatVideo] Track menu: \(type)=\(id.isEmpty ? "off" : id) -> \(result as? String ?? "nil")")
         }
     }
 
@@ -2235,7 +2246,9 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             // center; press it with a real mouse event. Only honor requests
             // whose same-poll snapshot still shows an ad, so a click can never
             // land on content after the ad ended between guard tick and poll.
-            if let tc = dict["tc"] as? [String: Any],
+            if self.currentSite == "youtube",
+               self.loadingStrategy == .fullPageInject,
+               let tc = dict["tc"] as? [String: Any],
                (dict["ads"] as? Bool) == true,
                let px = (tc["x"] as? NSNumber)?.doubleValue,
                let py = (tc["y"] as? NSNumber)?.doubleValue {
