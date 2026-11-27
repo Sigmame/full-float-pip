@@ -890,7 +890,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             }
         </style>
         </head><body>
-        <video src="\(htmlEscaped(videoSrc))" autoplay controls playsinline></video>
+        <video src="\(htmlEscaped(videoSrc))" autoplay playsinline></video>
         <script>
             const v = document.querySelector('video');
             v.currentTime = \(currentTime);
@@ -1184,7 +1184,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     }
 
                     mainVideo.play().catch(() => {});
-                    mainVideo.controls = site === 'youtube' ? false : true;
+                    // The native control bar replaces WebKit's, which would overlap it.
+                    mainVideo.controls = false;
                     window.__floatVideoMainVideo = mainVideo;
                     return true;
                 } finally {
