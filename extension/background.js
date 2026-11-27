@@ -90,6 +90,7 @@ class FloatVideoManager {
         this.tabVideos = new Map(); // tabId -> videoInfo[]
         this.isConnecting = false;
         this.floatingInProgress = false;
+        this.pendingTabId = null; // tab waiting for FLOAT_STATUS
     }
 
     // Establish persistent connection with Native App
@@ -110,6 +111,7 @@ class FloatVideoManager {
                 console.warn('[FloatVideo] Native port disconnected:', err?.message || 'unknown');
                 this.nativePort = null;
                 this.isConnecting = false;
+                this._sendFloatStatus('failed', err?.message || 'The FloatVideo app quit');
             });
 
             this.isConnecting = false;
@@ -130,7 +132,9 @@ class FloatVideoManager {
         this.floatingInProgress = true;
 
         try {
-            return await this._doFloatVideo(videoInfo, tabId);
+            const result = await this._doFloatVideo(videoInfo, tabId);
+            if (!result.success) this._sendFloatStatus('failed', result.error);
+            return result;
         } finally {
             this.floatingInProgress = false;
         }
@@ -149,6 +153,7 @@ class FloatVideoManager {
             // Wait for the old process to fully exit
             await new Promise(r => setTimeout(r, 300));
         }
+        this.pendingTabId = tabId;
 
         if (!this.connectNative() || !this.nativePort) {
             return { success: false, error: 'Native app not connected. Please run install.sh first.' };
@@ -232,7 +237,18 @@ class FloatVideoManager {
     _handleNativeMessage(msg) {
         if (msg.type === 'error') {
             console.error('[FloatVideo] Native error:', msg.error);
+            this._sendFloatStatus('failed', msg.error);
+        } else if (msg.type === 'status' && msg.status === 'opened') {
+            this._sendFloatStatus('opened');
         }
+    }
+
+    // Tells the tab that asked for the float whether the window opened, so it can drop its loading overlay.
+    _sendFloatStatus(status, error) {
+        const tabId = this.pendingTabId;
+        if (tabId == null) return;
+        this.pendingTabId = null;
+        chrome.tabs.sendMessage(tabId, { type: 'FLOAT_STATUS', status, error }).catch(() => { });
     }
 }
 

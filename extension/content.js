@@ -198,6 +198,65 @@
     }
   }
 
+  // Pauses the video and covers it with a grey overlay and a spinner until the float window opens.
+  const floatFeedback = {
+    host: null,
+
+    start(video) {
+      if (this.host) return;
+      const wasPlaying = !video.paused && !video.ended;
+      video.pause();
+      const host = document.createElement('float-video-status');
+      host.style.cssText = 'position:fixed;z-index:2147483647;display:flex;flex-direction:column;align-items:center;' +
+        'justify-content:center;gap:12px;text-align:center;background:rgba(24,24,24,.6);backdrop-filter:grayscale(1);' +
+        '-webkit-backdrop-filter:grayscale(1);color:#fff;font:600 15px/1.3 -apple-system,system-ui,sans-serif;' +
+        'cursor:progress;transition:opacity .2s;';
+      // Built node by node: YouTube enforces Trusted Types, which rejects innerHTML.
+      const style = document.createElement('style');
+      style.textContent = '.spinner{width:44px;height:44px;border:4px solid rgba(255,255,255,.25);' +
+        'border-top-color:#fff;border-radius:50%;animation:spin .9s linear infinite}' +
+        '@keyframes spin{to{transform:rotate(360deg)}}.detail{font-weight:400;font-size:12px;opacity:.8;max-width:80%}';
+      const spinner = document.createElement('div');
+      spinner.className = 'spinner';
+      const text = document.createElement('div');
+      text.textContent = 'Opening PiP…';
+      const detail = document.createElement('div');
+      detail.className = 'detail';
+      host.attachShadow({ mode: 'closed' }).append(style, spinner, text, detail);
+      (document.fullscreenElement || document.documentElement).appendChild(host);
+      this.host = host;
+      this.parts = { spinner, text, detail };
+      this.video = video;
+      this.wasPlaying = wasPlaying;
+      // The window may still have opened, so a timeout doesn't resume the tab's video.
+      this.timer = setTimeout(() => this.finish(false, 'No response from the FloatVideo app', false), 20000);
+      const place = () => {
+        if (!host.isConnected) return;
+        const r = video.getBoundingClientRect();
+        Object.assign(host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
+        requestAnimationFrame(place);
+      };
+      place();
+    },
+
+    finish(opened, error, resume = !opened) {
+      const { host, parts, video, wasPlaying } = this;
+      if (!host) return;
+      this.host = null;
+      clearTimeout(this.timer);
+      const remove = () => {
+        host.style.opacity = '0';
+        setTimeout(() => host.remove(), 200);
+        if (resume && wasPlaying) video.play().catch(() => { });
+      };
+      if (opened) return remove();
+      parts.spinner.remove();
+      parts.text.textContent = "Couldn't open PiP";
+      parts.detail.textContent = error || '';
+      setTimeout(remove, 2500);
+    },
+  };
+
   // ========== Initialization ==========
   const detector = new VideoDetector();
 
@@ -229,15 +288,22 @@
     const target = e.composedPath()[0];
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable) return;
 
+    // A second P while the float is opening does nothing.
+    if (floatFeedback.host) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
     const [video] = detector.scanForVideos();
     if (!video || !chrome.runtime?.id) return;
-    const element = detector.mainVideo;
 
     e.preventDefault();
     e.stopPropagation();
+    floatFeedback.start(detector.mainVideo);
+    // Success and asynchronous failures arrive as FLOAT_STATUS.
     chrome.runtime.sendMessage({ type: 'FLOAT_HOTKEY', videoInfo: video }).then(r => {
-      if (r?.success) element.pause();
-    }).catch(() => { });
+      if (!r?.success) floatFeedback.finish(false, r?.error);
+    }).catch(err => floatFeedback.finish(false, err.message));
   }, true);
 
   // Handle messages from popup/background
@@ -252,7 +318,7 @@
       if (!detector.mainVideo?.isConnected) detector.scanForVideos();
 
       if (detector.mainVideo) {
-        detector.mainVideo.pause();
+        floatFeedback.start(detector.mainVideo);
         sendResponse({
           success: true,
           videoInfo: detector.detectedVideos[0],
@@ -261,6 +327,10 @@
         sendResponse({ success: false, error: 'Video not found' });
       }
       return true;
+    }
+
+    if (message.type === 'FLOAT_STATUS') {
+      floatFeedback.finish(message.status === 'opened', message.error);
     }
 
     return false;

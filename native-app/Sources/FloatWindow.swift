@@ -76,6 +76,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     // loadVideo would permanently disable the YouTube embed fallback.
     private var httpServerPortProvider: (() -> UInt16)?
     private var loadingOverlay: NSView?
+    private var playbackStarted = false
+    private var lastPolledTime: Double?
     private var hasTriedYouTubeEmbedFallback = false
     private var youtubeEmbedFallbackURL: URL?
     private var youtubeFallbackWorkItem: DispatchWorkItem?
@@ -254,7 +256,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         // Loading overlay (covers webView during loading)
         let overlay = LoadingOverlayView(frame: webFrame)
         overlay.wantsLayer = true
-        overlay.layer?.backgroundColor = NSColor.black.cgColor
+        overlay.layer?.backgroundColor = NSColor(white: 0.12, alpha: 1).cgColor
         overlay.autoresizingMask = [.width, .height]
 
         let spinnerSize: CGFloat = 36.0
@@ -288,6 +290,15 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
         overlay.layer?.addSublayer(spinnerContainer)
         overlay.spinnerLayer = spinnerContainer
+
+        let caption = NSTextField(labelWithString: "Loading video…")
+        caption.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        caption.textColor = NSColor(white: 0.8, alpha: 1)
+        caption.sizeToFit()
+        caption.frame.origin = NSPoint(x: (webFrame.width - caption.frame.width) / 2,
+                                       y: webFrame.height / 2 - spinnerSize / 2 - 14 - caption.frame.height)
+        caption.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
+        overlay.addSubview(caption)
         container.addSubview(overlay)
         self.loadingOverlay = overlay
 
@@ -382,6 +393,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         layoutTimeLabel()
 
         container.addSubview(controlBarView)
+        // No controls until the video plays (hideLoadingOverlay).
+        controlBarView.isHidden = true
 
         // Hide title bar by default (PiP-style: shown on hover)
         titleBarView.alphaValue = 0
@@ -845,13 +858,13 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                                              currentTime: self.currentVideoTime)
                 }
             }
-            // The overlay stays until the video is isolated (or show()'s 8 s safety), so the raw page never flashes.
+            // The overlay stays until the video plays (or show()'s safety timeouts), so the raw page never flashes.
             if shouldUseYouTubeFullPagePrimary() {
                 scheduleYouTubeEmbedFallbackCheck(after: 5.5)
             }
         } else {
-            // Other strategies (direct video, YouTube embed, site embed) have built-in autoplay, remove overlay directly
-            hideLoadingOverlay()
+            // Other strategies (direct video, YouTube embed, site embed) have built-in autoplay
+            startPlayback()
         }
     }
 
@@ -1233,7 +1246,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 self?.hasInjectedJS = true
                 self?.youtubeFallbackWorkItem?.cancel()
                 self?.youtubeFallbackWorkItem = nil
-                self?.hideLoadingOverlay()
+                self?.startPlayback()
             }
         }
     }
@@ -1514,8 +1527,11 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         // Start cursor-position polling for reliable auto-hide (event-based
         // approaches fail on non-activating panels and under WKWebView).
         startCursorPolling()
-        // Safety: hide loading overlay after 8s regardless
+        // Safety: start playback after 8 s and drop the overlay after 20 s even if the video never plays.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+            self?.startPlayback()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
             self?.hideLoadingOverlay()
         }
     }
@@ -1551,19 +1567,26 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         }
     }
 
-    private func hideLoadingOverlay() {
-        guard let overlay = loadingOverlay else { return }
-        // Resume media playback and trigger autoplay
+    /// Resumes the media suspended during loading and starts autoplay and polling; the overlay stays until playback is seen.
+    private func startPlayback() {
+        guard !playbackStarted else { return }
+        playbackStarted = true
         webView.setAllMediaPlaybackSuspended(false) { [weak self] in
             self?.triggerPlayback()
         }
+        startUpdateTimer()
+    }
+
+    private func hideLoadingOverlay() {
+        startPlayback()
+        guard let overlay = loadingOverlay else { return }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.3
             overlay.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             self?.loadingOverlay?.removeFromSuperview()
             self?.loadingOverlay = nil
-            self?.startUpdateTimer()
+            self?.controlBarView.isHidden = false
             // After loading completes, hide title bar if mouse is not inside the window
             if !(self?.isHovering ?? false) {
                 NSAnimationContext.runAnimationGroup({ context in
@@ -2299,7 +2322,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 var mp = document.querySelector('#movie_player, .html5-video-player');
                 var ads = !!(mp && (mp.classList.contains('ad-showing') ||
                                     mp.classList.contains('ad-interrupting')));
-                return { ct: v.currentTime, dur: v.duration, vol: v.volume, muted: v.muted, paused: v.paused,
+                return { ct: v.currentTime, dur: v.duration, vol: v.volume, muted: v.muted, paused: v.paused, seeking: v.seeking,
                          skips: window.__floatVideoAdSkipCount || 0,
                          ff: window.__floatVideoAdFFCount || 0,
                          adSkipInstalled: !!window.__floatVideoAdSkipInstalled,
@@ -2310,12 +2333,22 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         })()
         """
         webView.evaluateJavaScript(js) { [weak self] result, _ in
-            guard let self = self, let dict = result as? [String: Any] else { return }
+            guard let self = self else { return }
+            guard let dict = result as? [String: Any] else {
+                // An embed whose video we can't reach can't report playback.
+                if self.loadingStrategy != .fullPageInject { self.hideLoadingOverlay() }
+                return
+            }
             let ct = dict["ct"] as? Double ?? 0
             let dur = dict["dur"] as? Double ?? 0
             let vol = dict["vol"] as? Double ?? 1
             let muted = dict["muted"] as? Bool ?? false
             let paused = dict["paused"] as? Bool ?? true
+            if self.loadingOverlay != nil, !paused, dict["seeking"] as? Bool != true,
+               let last = self.lastPolledTime, ct != last {
+                self.hideLoadingOverlay()
+            }
+            self.lastPolledTime = ct
 
             // Diagnostics: log whenever the in-page ad-skip guard has clicked Skip
             // since the last poll (the guard runs in-page, so surface it natively).
