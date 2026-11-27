@@ -828,20 +828,18 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 injectAdSkip()
                 scheduleApplyPlayerPrefs()
             }
-            for delay in [1.5, 3.0, 5.0] {
+            // VK Video can take 8+ s after didFinish to give its player a source.
+            for delay in [1.5, 3.0, 5.0, 8.0, 12.0] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    guard let self = self, !self.hasInjectedJS else { return }
+                    guard let self = self, self.loadingStrategy == .fullPageInject,
+                          !self.hasInjectedJS else { return }
                     self.injectVideoMaximize(site: self.currentSite,
                                              currentTime: self.currentVideoTime)
                 }
             }
+            // The overlay stays until the video is isolated (or show()'s 8 s safety), so the raw page never flashes.
             if shouldUseYouTubeFullPagePrimary() {
                 scheduleYouTubeEmbedFallbackCheck(after: 5.5)
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    guard let self = self, self.loadingStrategy == .fullPageInject else { return }
-                    self.hideLoadingOverlay()
-                }
             }
         } else {
             // Other strategies (direct video, YouTube embed, site embed) have built-in autoplay, remove overlay directly
@@ -941,8 +939,9 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             const initialTime = \(currentTime);
 
             function findMainVideo() {
-                if (window.__floatVideoMainVideo && window.__floatVideoMainVideo.isConnected) {
-                    return window.__floatVideoMainVideo;
+                const cached = window.__floatVideoMainVideo;
+                if (cached && cached.isConnected && (cached.currentSrc || cached.srcObject)) {
+                    return cached;
                 }
 
                 const videos = [];
@@ -953,11 +952,12 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     });
                 }
                 collectVideos(document);
-                if (videos.length === 0) return null;
 
-                let mainVideo = videos[0];
-                let maxArea = 0;
+                // Skip videos without a source: VK Video's empty ad slot exists before the real player.
+                let mainVideo = null;
+                let maxArea = -1;
                 videos.forEach(v => {
+                    if (!v.currentSrc && !v.srcObject) return;
                     const rect = v.getBoundingClientRect();
                     const area = rect.width * rect.height;
                     if (area > maxArea) {
@@ -965,7 +965,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                         mainVideo = v;
                     }
                 });
-                window.__floatVideoMainVideo = mainVideo;
+                if (mainVideo) window.__floatVideoMainVideo = mainVideo;
                 return mainVideo;
             }
 
@@ -1170,10 +1170,17 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     mainVideo.setAttribute('playsinline', '');
 
                     if (!window.__floatVideoInitialSeekDone && initialTime > 0) {
-                        try {
-                            mainVideo.currentTime = initialTime;
-                        } catch (e) {}
                         window.__floatVideoInitialSeekDone = true;
+                        // VK Video's player stalls on a black frame if seeked while it is still starting.
+                        const seekOncePlaying = () => {
+                            if (site !== 'youtube' && mainVideo.currentTime <= 0) return;
+                            mainVideo.removeEventListener('timeupdate', seekOncePlaying);
+                            try {
+                                mainVideo.currentTime = initialTime;
+                            } catch (e) {}
+                        };
+                        mainVideo.addEventListener('timeupdate', seekOncePlaying);
+                        seekOncePlaying();
                     }
 
                     mainVideo.play().catch(() => {});
@@ -1217,9 +1224,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 self?.hasInjectedJS = true
                 self?.youtubeFallbackWorkItem?.cancel()
                 self?.youtubeFallbackWorkItem = nil
-                if self?.shouldUseYouTubeFullPagePrimary() == true {
-                    self?.hideLoadingOverlay()
-                }
+                self?.hideLoadingOverlay()
             }
         }
     }
