@@ -41,11 +41,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         switch action {
         case "open":
-            let url = msg["url"] as? String ?? ""
-            let videoSrc = msg["videoSrc"] as? String ?? ""
-            let embedUrl = msg["embedUrl"] as? String ?? ""
+            let url = validatedHTTPURL(msg["url"] as? String ?? "")
+            let videoSrc = validatedHTTPURL(msg["videoSrc"] as? String ?? "")
+            let embedUrl = validatedHTTPURL(msg["embedUrl"] as? String ?? "")
             let title = msg["title"] as? String ?? "Float Video"
-            let site = msg["site"] as? String ?? "generic"
+            let rawSite = msg["site"] as? String ?? "generic"
+            let site = rawSite.range(of: "\\A[a-z]+\\z", options: .regularExpression) != nil ? rawSite : "generic"
             let width = msg["width"] as? CGFloat
                 ?? CGFloat(msg["width"] as? Int ?? 640)
             let height = msg["height"] as? CGFloat
@@ -74,11 +75,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ])
 
         case "close":
+            let position = floatWindow?.playbackPosition
             closeFloatWindow()
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "closed"
-            ])
+            messageHandler?.sendMessage(closedStatus(position))
 
         case "ping":
             messageHandler?.sendMessage([
@@ -92,6 +91,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 "error": "Unknown action: \(action)"
             ])
         }
+    }
+
+    private func validatedHTTPURL(_ string: String) -> String {
+        let lower = string.lowercased()
+        return lower.hasPrefix("http://") || lower.hasPrefix("https://") ? string : ""
     }
 
     func openFloatWindow(url: String, videoSrc: String?, embedUrl: String?,
@@ -118,14 +122,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         floatWindow?.onClose = { [weak self] in
-            self?.floatWindow = nil
-            self?.messageHandler?.sendMessage([
-                "type": "status",
-                "status": "closed"
-            ])
+            guard let self = self else { return }
+            let position = self.floatWindow?.playbackPosition
+            self.floatWindow = nil
+            self.messageHandler?.sendMessage(self.closedStatus(position))
         }
 
         floatWindow?.show()
+    }
+
+    /// The position lets the tab continue where the float stopped.
+    private func closedStatus(_ position: Double?) -> [String: Any] {
+        var status: [String: Any] = ["type": "status", "status": "closed"]
+        if let position = position { status["currentTime"] = position }
+        return status
     }
 
     func closeFloatWindow() {

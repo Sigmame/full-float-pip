@@ -47,6 +47,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     private var controlBarView: NSView!
     private var playPauseButton: NSButton!
     private var skipButton: NSButton!
+    private var settingsButton: NSButton!
     private var volumeButton: NSButton!
     private var volumeSlider: NSSlider!
     private var timeLabel: NSTextField!
@@ -75,6 +76,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     // loadVideo would permanently disable the YouTube embed fallback.
     private var httpServerPortProvider: (() -> UInt16)?
     private var loadingOverlay: NSView?
+    private var playbackStarted = false
+    private var lastPolledTime: Double?
+    /// Last content position seen after loading, outside ads; reported to the tab when the window closes.
+    private(set) var playbackPosition: Double?
     private var hasTriedYouTubeEmbedFallback = false
     private var youtubeEmbedFallbackURL: URL?
     private var youtubeFallbackWorkItem: DispatchWorkItem?
@@ -155,6 +160,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification,
             object: self, queue: .main) { [weak self] _ in
             self?.scheduleInjectedLayoutRefresh()
+            self?.layoutTimeLabel()
         }
 
         // Key setting 3: Floating panel properties
@@ -235,6 +241,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         // WKWebView (fills entire window, title bar overlays on top)
         let webConfig = WKWebViewConfiguration()
         webConfig.mediaTypesRequiringUserActionForPlayback = []
+        webConfig.websiteDataStore = .nonPersistent()
 
         let webFrame = NSRect(x: 0, y: 0, width: width, height: height)
         webView = WKWebView(frame: webFrame, configuration: webConfig)
@@ -251,7 +258,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         // Loading overlay (covers webView during loading)
         let overlay = LoadingOverlayView(frame: webFrame)
         overlay.wantsLayer = true
-        overlay.layer?.backgroundColor = NSColor.black.cgColor
+        overlay.layer?.backgroundColor = NSColor(white: 0.12, alpha: 1).cgColor
         overlay.autoresizingMask = [.width, .height]
 
         let spinnerSize: CGFloat = 36.0
@@ -285,6 +292,15 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
         overlay.layer?.addSublayer(spinnerContainer)
         overlay.spinnerLayer = spinnerContainer
+
+        let caption = NSTextField(labelWithString: "Loading video…")
+        caption.font = NSFont.systemFont(ofSize: 13, weight: .medium)
+        caption.textColor = NSColor(white: 0.8, alpha: 1)
+        caption.sizeToFit()
+        caption.frame.origin = NSPoint(x: (webFrame.width - caption.frame.width) / 2,
+                                       y: webFrame.height / 2 - spinnerSize / 2 - 14 - caption.frame.height)
+        caption.autoresizingMask = [.minXMargin, .maxXMargin, .minYMargin, .maxYMargin]
+        overlay.addSubview(caption)
         container.addSubview(overlay)
         self.loadingOverlay = overlay
 
@@ -326,6 +342,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         controlBarView.addSubview(ppBtn)
         x += 32
 
+        let backBtn = makeControlButton(x: x, symbolName: "gobackward.10", action: #selector(skipBackward))
+        controlBarView.addSubview(backBtn)
+        x += 32
+
         // Skip 10s
         let skipBtn = makeControlButton(x: x, symbolName: "goforward.10", action: #selector(skipForward))
         self.skipButton = skipBtn
@@ -351,8 +371,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         self.volumeSlider = slider
         x += 64
 
-        // Time label (right-aligned, left of the track menu button)
-        let tLabel = NSTextField(frame: NSRect(x: width - 136, y: 8, width: 92, height: 20))
+        // Time label (right-aligned, between the volume slider and the settings button; see layoutTimeLabel)
+        let tLabel = NSTextField(frame: NSRect(x: x, y: 8, width: 0, height: 20))
         tLabel.stringValue = "0:00 / 0:00"
         tLabel.isEditable = false
         tLabel.isBordered = false
@@ -365,14 +385,18 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         self.timeLabel = tLabel
         controlBarView.addSubview(tLabel)
 
-        // Audio track & subtitles menu (far right, clear of the resize border)
+        // Playback settings menu (far right, clear of the resize border)
         let tracksBtn = makeControlButton(x: width - 44, symbolName: "gearshape.fill",
                                           action: #selector(showTrackMenu(_:)))
         tracksBtn.autoresizingMask = [.minXMargin]
-        tracksBtn.toolTip = "Audio track & subtitles"
+        tracksBtn.toolTip = "Playback settings"
         controlBarView.addSubview(tracksBtn)
+        self.settingsButton = tracksBtn
+        layoutTimeLabel()
 
         container.addSubview(controlBarView)
+        // No controls until the video plays (hideLoadingOverlay).
+        controlBarView.isHidden = true
 
         // Hide title bar by default (PiP-style: shown on hover)
         titleBarView.alphaValue = 0
@@ -486,7 +510,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             let audioDesc = (playerPrefs?["audioTrack"] as? [String: Any])?["id"] as? String ?? "default"
             let lsCount = (playerPrefs?["localStorage"] as? [String: Any])?.count ?? 0
             let rate = (playerPrefs?["playbackRate"] as? NSNumber)?.doubleValue ?? 1.0
-            NSLog("[FloatVideo] playerPrefs received: track=\(trackDesc) audio=\(audioDesc) lsKeys=\(lsCount) rate=\(rate)")
+            NSLog("%@", "[FloatVideo] playerPrefs received: track=\(trackDesc) audio=\(audioDesc) lsKeys=\(lsCount) rate=\(rate)")
         }
 
         // Suspend all media playback while overlay is visible, prevent audio during loading
@@ -497,7 +521,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             self.loadingStrategy = .directVideo
             let html = buildVideoHTML(videoSrc: videoSrc, currentTime: currentTime)
             webView.loadHTMLString(html, baseURL: URL(string: videoSrc))
-            NSLog("[FloatVideo] Loading direct video: \(videoSrc)")
+            NSLog("%@", "[FloatVideo] Loading direct video: \(logSafeURL(videoSrc))")
             return
         }
 
@@ -509,7 +533,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 let loadPage = { [weak self] in
                     self?.loadingStrategy = .fullPageInject
                     self?.webView.load(URLRequest(url: pageURL))
-                    NSLog("[FloatVideo] Loading YouTube full page for JS injection: \(url)")
+                    NSLog("%@", "[FloatVideo] Loading YouTube full page for JS injection: \(logSafeURL(url))")
                 }
 
                 if !cookies.isEmpty {
@@ -532,14 +556,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             self.loadingStrategy = .siteEmbed
             let html = buildEmbedHTML(embedUrl: embedUrl)
             webView.loadHTMLString(html, baseURL: nil)
-            NSLog("[FloatVideo] Loading embed via iframe: \(embedUrl)")
+            NSLog("%@", "[FloatVideo] Loading embed via iframe: \(logSafeURL(embedUrl))")
             return
         }
 
         // Priority 4: Load full page and inject JS
         if !url.isEmpty, let pageURL = URL(string: url) {
             webView.load(URLRequest(url: pageURL))
-            NSLog("[FloatVideo] Loading full page: \(url)")
+            NSLog("%@", "[FloatVideo] Loading full page: \(logSafeURL(url))")
         }
     }
 
@@ -565,6 +589,9 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             ]
             if secure {
                 properties[.secure] = "TRUE"
+            }
+            if cookieData["httpOnly"] as? Bool == true {
+                properties[HTTPCookiePropertyKey("HttpOnly")] = "TRUE"
             }
 
             if let cookie = HTTPCookie(properties: properties) {
@@ -615,7 +642,6 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         components.path = "/play"
         components.queryItems = [
             URLQueryItem(name: "v", value: videoId),
-            URLQueryItem(name: "site", value: "youtube"),
             URLQueryItem(name: "t", value: String(startSeconds)),
             URLQueryItem(name: "w", value: String(Int(safeViewport.width))),
             URLQueryItem(name: "h", value: String(Int(safeViewport.height))),
@@ -712,7 +738,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     private func attemptApplyPlayerPrefs(after delay: TimeInterval) {
         guard let deadline = prefsApplyDeadline else { return }
         guard Date() < deadline else {
-            NSLog("[FloatVideo] Player prefs give-up after 60s (last status: \(lastPrefsStatus))")
+            NSLog("%@", "[FloatVideo] Player prefs give-up after 60s (last status: \(lastPrefsStatus))")
             prefsApplyDeadline = nil
             return
         }
@@ -767,7 +793,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let js = "if (window.__floatVideoApplyLayout) { window.__floatVideoApplyLayout(); true } else { false }"
         webView.evaluateJavaScript(js) { [weak self] result, error in
             if let error = error {
-                NSLog("[FloatVideo] Layout refresh JS error: \(error)")
+                NSLog("%@", "[FloatVideo] Layout refresh JS error: \(logSafeError(error))")
                 return
             }
             if let ok = result as? Bool, !ok {
@@ -803,14 +829,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         loadingStrategy = .youtubeEmbed
         hasInjectedJS = false
         webView.load(URLRequest(url: fallbackURL))
-        NSLog("[FloatVideo] Switching YouTube to embed fallback (\(reason)): \(fallbackURL.absoluteString)")
+        NSLog("%@", "[FloatVideo] Switching YouTube to embed fallback (\(reason)): \(logSafeURL(fallbackURL.absoluteString))")
         return true
     }
 
     // MARK: - WKNavigationDelegate
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        NSLog("[FloatVideo] Page loaded (strategy: \(loadingStrategy), site: \(currentSite)), webView: \(webView.frame), container: \(self.contentView?.frame ?? .zero)")
+        NSLog("%@", "[FloatVideo] Page loaded (strategy: \(loadingStrategy), site: \(currentSite)), webView: \(webView.frame), container: \(self.contentView?.frame ?? .zero)")
 
         if loadingStrategy == .fullPageInject {
             // Full page load + JS inject: delay removing overlay after injection to let DOM operations complete
@@ -825,29 +851,27 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 injectAdSkip()
                 scheduleApplyPlayerPrefs()
             }
-            for delay in [1.5, 3.0, 5.0] {
+            // VK Video can take 8+ s after didFinish to give its player a source.
+            for delay in [1.5, 3.0, 5.0, 8.0, 12.0] {
                 DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-                    guard let self = self, !self.hasInjectedJS else { return }
+                    guard let self = self, self.loadingStrategy == .fullPageInject,
+                          !self.hasInjectedJS else { return }
                     self.injectVideoMaximize(site: self.currentSite,
                                              currentTime: self.currentVideoTime)
                 }
             }
+            // The overlay stays until the video plays (or show()'s safety timeouts), so the raw page never flashes.
             if shouldUseYouTubeFullPagePrimary() {
                 scheduleYouTubeEmbedFallbackCheck(after: 5.5)
-            } else {
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                    guard let self = self, self.loadingStrategy == .fullPageInject else { return }
-                    self.hideLoadingOverlay()
-                }
             }
         } else {
-            // Other strategies (direct video, YouTube embed, site embed) have built-in autoplay, remove overlay directly
-            hideLoadingOverlay()
+            // Other strategies (direct video, YouTube embed, site embed) have built-in autoplay
+            startPlayback()
         }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
-        NSLog("[FloatVideo] Page load failed: \(error)")
+        NSLog("%@", "[FloatVideo] Page load failed: \(logSafeError(error))")
         refreshYouTubeEmbedFallbackURLIfNeeded()
         if shouldUseYouTubeFullPagePrimary() && startYouTubeEmbedFallback(reason: "didFail") {
             return
@@ -856,12 +880,20 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        NSLog("[FloatVideo] Provisional page load failed: \(error)")
+        NSLog("%@", "[FloatVideo] Provisional page load failed: \(logSafeError(error))")
         refreshYouTubeEmbedFallbackURLIfNeeded()
         if shouldUseYouTubeFullPagePrimary() && startYouTubeEmbedFallback(reason: "didFailProvisional") {
             return
         }
         hideLoadingOverlay()
+    }
+
+    private func htmlEscaped(_ s: String) -> String {
+        return s.replacingOccurrences(of: "&", with: "&amp;")
+            .replacingOccurrences(of: "\"", with: "&quot;")
+            .replacingOccurrences(of: "'", with: "&#39;")
+            .replacingOccurrences(of: "<", with: "&lt;")
+            .replacingOccurrences(of: ">", with: "&gt;")
     }
 
     private func buildVideoHTML(videoSrc: String, currentTime: Double) -> String {
@@ -881,7 +913,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             }
         </style>
         </head><body>
-        <video src="\(videoSrc)" autoplay controls playsinline></video>
+        <video src="\(htmlEscaped(videoSrc))" autoplay playsinline></video>
         <script>
             const v = document.querySelector('video');
             v.currentTime = \(currentTime);
@@ -913,7 +945,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             }
         </style>
         </head><body>
-        <iframe src="\(embedUrl)"
+        <iframe src="\(htmlEscaped(embedUrl))"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share"
                 referrerpolicy="strict-origin-when-cross-origin"
                 allowfullscreen>
@@ -930,15 +962,25 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             const initialTime = \(currentTime);
 
             function findMainVideo() {
-                const videos = Array.from(document.querySelectorAll('video'));
-                if (videos.length === 0) return null;
-                if (window.__floatVideoMainVideo && document.contains(window.__floatVideoMainVideo)) {
-                    return window.__floatVideoMainVideo;
+                const cached = window.__floatVideoMainVideo;
+                if (cached && cached.isConnected && (cached.currentSrc || cached.srcObject)) {
+                    return cached;
                 }
 
-                let mainVideo = videos[0];
-                let maxArea = 0;
+                const videos = [];
+                function collectVideos(root) {
+                    videos.push(...root.querySelectorAll('video'));
+                    root.querySelectorAll('*').forEach(el => {
+                        if (el.shadowRoot) collectVideos(el.shadowRoot);
+                    });
+                }
+                collectVideos(document);
+
+                // Skip videos without a source: VK Video's empty ad slot exists before the real player.
+                let mainVideo = null;
+                let maxArea = -1;
                 videos.forEach(v => {
+                    if (!v.currentSrc && !v.srcObject) return;
                     const rect = v.getBoundingClientRect();
                     const area = rect.width * rect.height;
                     if (area > maxArea) {
@@ -946,7 +988,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                         mainVideo = v;
                     }
                 });
-                window.__floatVideoMainVideo = mainVideo;
+                if (mainVideo) window.__floatVideoMainVideo = mainVideo;
                 return mainVideo;
             }
 
@@ -1025,6 +1067,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                         transform: none !important;
                         filter: none !important;
                         transition: none !important;
+                        /* contain: paint/strict makes the fixed video position against the ancestor (VK Video). */
+                        contain: none !important;
                     }
                     video.__floatvideo-main-video {
                         position: fixed !important;
@@ -1049,11 +1093,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     }
                     ${youtubeCss}
                 `;
+                return styleEl;
             }
 
-            function hideNonAncestors(element, ancestors, mainVideo) {
-                if (!element || !element.children) return;
-                Array.from(element.children).forEach(child => {
+            function hideNonAncestors(element, ancestors, mainVideo, shadowRoots) {
+                if (!element) return;
+                const root = shadowRoots.has(element.shadowRoot) ? element.shadowRoot : element;
+                if (!root.children) return;
+                Array.from(root.children).forEach(child => {
                     if (child === mainVideo) return;
                     if (ancestors.has(child)) {
                         child.style.setProperty('display', '', 'important');
@@ -1067,7 +1114,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                         child.style.setProperty('height', '100%', 'important');
                         child.style.setProperty('margin', '0', 'important');
                         child.style.setProperty('padding', '0', 'important');
-                        hideNonAncestors(child, ancestors, mainVideo);
+                        hideNonAncestors(child, ancestors, mainVideo, shadowRoots);
                     } else {
                         // Caption overlay DOM is a SIBLING of the <video>, not an
                         // ancestor — never hide it, or captions can't render.
@@ -1089,29 +1136,35 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 window.__floatVideoApplyingLayout = true;
 
                 try {
-                    ensureFloatVideoStyle();
+                    const styleEl = ensureFloatVideoStyle();
 
-                    document.querySelectorAll('.__floatvideo-ancestor').forEach(el => {
-                        el.classList.remove('__floatvideo-ancestor');
-                    });
-                    document.querySelectorAll('.__floatvideo-main-video').forEach(el => {
-                        el.classList.remove('__floatvideo-main-video');
+                    (window.__floatVideoLayoutElements || []).forEach(el => {
+                        el.classList.remove('__floatvideo-ancestor', '__floatvideo-main-video');
                     });
 
                     const ancestors = new Set();
+                    const shadowRoots = new Set();
                     let current = mainVideo;
                     while (current) {
                         ancestors.add(current);
                         if (current.classList) {
                             current.classList.add('__floatvideo-ancestor');
                         }
-                        current = current.parentElement;
+                        const parent = current.parentNode;
+                        if (parent instanceof ShadowRoot) shadowRoots.add(parent);
+                        current = current.parentElement || (parent instanceof ShadowRoot ? parent.host : null);
                     }
+                    window.__floatVideoLayoutElements = Array.from(ancestors);
+                    shadowRoots.forEach(root => {
+                        if (!root.getElementById('__floatvideo-style')) {
+                            root.appendChild(styleEl.cloneNode(true));
+                        }
+                    });
 
                     document.documentElement.style.cssText = 'margin:0!important;padding:0!important;overflow:hidden!important;background:#000!important;width:100%!important;height:100%!important;';
                     document.body.style.cssText = 'margin:0!important;padding:0!important;overflow:hidden!important;background:#000!important;width:100%!important;height:100%!important;';
 
-                    hideNonAncestors(document.body, ancestors, mainVideo);
+                    hideNonAncestors(document.body, ancestors, mainVideo, shadowRoots);
 
                     if (site === 'youtube') {
                         ancestors.forEach(el => {
@@ -1140,14 +1193,22 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     mainVideo.setAttribute('playsinline', '');
 
                     if (!window.__floatVideoInitialSeekDone && initialTime > 0) {
-                        try {
-                            mainVideo.currentTime = initialTime;
-                        } catch (e) {}
                         window.__floatVideoInitialSeekDone = true;
+                        // VK Video's player stalls on a black frame if seeked while it is still starting.
+                        const seekOncePlaying = () => {
+                            if (site !== 'youtube' && mainVideo.currentTime <= 0) return;
+                            mainVideo.removeEventListener('timeupdate', seekOncePlaying);
+                            try {
+                                mainVideo.currentTime = initialTime;
+                            } catch (e) {}
+                        };
+                        mainVideo.addEventListener('timeupdate', seekOncePlaying);
+                        seekOncePlaying();
                     }
 
                     mainVideo.play().catch(() => {});
-                    mainVideo.controls = site === 'youtube' ? false : true;
+                    // The native control bar replaces WebKit's, which would overlap it.
+                    mainVideo.controls = false;
                     window.__floatVideoMainVideo = mainVideo;
                     return true;
                 } finally {
@@ -1182,14 +1243,12 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         """
         webView.evaluateJavaScript(js) { [weak self] result, err in
             if let err = err {
-                NSLog("[FloatVideo] JS injection error: \(err)")
+                NSLog("%@", "[FloatVideo] JS injection error: \(logSafeError(err))")
             } else if let found = result as? Bool, found {
                 self?.hasInjectedJS = true
                 self?.youtubeFallbackWorkItem?.cancel()
                 self?.youtubeFallbackWorkItem = nil
-                if self?.shouldUseYouTubeFullPagePrimary() == true {
-                    self?.hideLoadingOverlay()
-                }
+                self?.startPlayback()
             }
         }
     }
@@ -1409,7 +1468,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         """
         webView.evaluateJavaScript(js) { [weak self] result, err in
             if let err = err {
-                NSLog("[FloatVideo] Ad-skip guard injection error: \(err)")
+                NSLog("%@", "[FloatVideo] Ad-skip guard injection error: \(logSafeError(err))")
             } else {
                 self?.hasInjectedAdSkip = true
                 // Only log fresh installs; the poll-driven self-heal re-invokes
@@ -1470,8 +1529,11 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         // Start cursor-position polling for reliable auto-hide (event-based
         // approaches fail on non-activating panels and under WKWebView).
         startCursorPolling()
-        // Safety: hide loading overlay after 8s regardless
+        // Safety: start playback after 8 s and drop the overlay after 20 s even if the video never plays.
         DispatchQueue.main.asyncAfter(deadline: .now() + 8.0) { [weak self] in
+            self?.startPlayback()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 20.0) { [weak self] in
             self?.hideLoadingOverlay()
         }
     }
@@ -1507,19 +1569,26 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         }
     }
 
-    private func hideLoadingOverlay() {
-        guard let overlay = loadingOverlay else { return }
-        // Resume media playback and trigger autoplay
+    /// Resumes the media suspended during loading and starts autoplay and polling; the overlay stays until playback is seen.
+    private func startPlayback() {
+        guard !playbackStarted else { return }
+        playbackStarted = true
         webView.setAllMediaPlaybackSuspended(false) { [weak self] in
             self?.triggerPlayback()
         }
+        startUpdateTimer()
+    }
+
+    private func hideLoadingOverlay() {
+        startPlayback()
+        guard let overlay = loadingOverlay else { return }
         NSAnimationContext.runAnimationGroup({ context in
             context.duration = 0.3
             overlay.animator().alphaValue = 0
         }, completionHandler: { [weak self] in
             self?.loadingOverlay?.removeFromSuperview()
             self?.loadingOverlay = nil
-            self?.startUpdateTimer()
+            self?.controlBarView.isHidden = false
             // After loading completes, hide title bar if mouse is not inside the window
             if !(self?.isHovering ?? false) {
                 NSAnimationContext.runAnimationGroup({ context in
@@ -1538,20 +1607,25 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let mutedJSBool = wantMute ? "true" : "false"
         let ytMuteCmd = wantMute ? "'mute'" : "'unmute'"
         let js = """
-        document.querySelectorAll('video').forEach(v => {
-            v.muted = \(mutedJSBool);
-            if (!\(mutedJSBool)) v.volume = 1.0;
-            v.play().catch(() => {});
-        });
-        if (window.playerCommand) {
-            window.playerCommand(\(ytMuteCmd));
-            if (!\(mutedJSBool)) window.playerCommand('volume', 1.0);
-            window.playerCommand('play');
-        }
-        var iframe = document.querySelector('iframe');
-        if (iframe) {
-            iframe.contentWindow.postMessage(JSON.stringify({event:'command',func:'playVideo',args:[]}), '*');
-        }
+        (function() {
+            var videos = Array.from(document.querySelectorAll('video'));
+            var mainVideo = \(Self.mainVideoJS);
+            if (mainVideo && !videos.includes(mainVideo)) videos.push(mainVideo);
+            videos.forEach(v => {
+                v.muted = \(mutedJSBool);
+                if (!\(mutedJSBool)) v.volume = 1.0;
+                v.play().catch(() => {});
+            });
+            if (window.playerCommand) {
+                window.playerCommand(\(ytMuteCmd));
+                if (!\(mutedJSBool)) window.playerCommand('volume', 1.0);
+                window.playerCommand('play');
+            }
+            var iframe = document.querySelector('iframe');
+            if (iframe) {
+                iframe.contentWindow.postMessage(JSON.stringify({event:'command',func:'playVideo',args:[]}), '*');
+            }
+        })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
         // Delayed retry (YouTube iframe may not be ready yet)
@@ -1639,11 +1713,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         }
     }
 
+    private static let mainVideoJS = "(window.__floatVideoMainVideo && window.__floatVideoMainVideo.isConnected ? window.__floatVideoMainVideo : document.querySelector('video'))"
+
     private func videoJS(_ directJS: String, youtubeCmd: String? = nil) {
-        var js = "var v = document.querySelector('video'); if(v) { \(directJS) }"
+        var js = "(function() { var v = \(Self.mainVideoJS); if(v) { \(directJS) }"
         if let cmd = youtubeCmd {
             js += " else if(window.playerCommand) { \(cmd) }"
         }
+        js += " })();"
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
@@ -1655,6 +1732,11 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         }
         isPlaying.toggle()
         setButtonSymbol(playPauseButton, isPlaying ? "pause.fill" : "play.fill")
+    }
+
+    @objc func skipBackward() {
+        videoJS("v.currentTime = Math.max(0, v.currentTime - 10)",
+                youtubeCmd: "playerCommand('seek', Math.max(0, (window.getPlayerState()?.ct||0)-10))")
     }
 
     @objc func skipForward() {
@@ -1687,12 +1769,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
     private func seekTo(percent: Double) {
         let js = """
-        var v = document.querySelector('video');
-        if (v && v.duration) { v.currentTime = v.duration * \(percent); }
-        else if (window.getPlayerState && window.playerCommand) {
-            var s = window.getPlayerState();
-            if (s) playerCommand('seek', s.dur * \(percent));
-        }
+        (function() {
+            var v = \(Self.mainVideoJS);
+            if (v && v.duration) { v.currentTime = v.duration * \(percent); }
+            else if (window.getPlayerState && window.playerCommand) {
+                var s = window.getPlayerState();
+                if (s) playerCommand('seek', s.dur * \(percent));
+            }
+        })();
         """
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
@@ -1702,9 +1786,9 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     /// In-page helper behind the track menu and the float-time prefs sync.
     /// Called as `(source)(request)`; re-evaluated on every use because a full
     /// in-page navigation wipes the JS world. Actions:
-    /// - `query`: lists audio tracks, caption tracks and auto-translate
-    ///   languages with the current selection.
-    /// - `select`: applies a menu pick ({type: audio|captions|translate, id}).
+    /// - `query`: lists playback rates, YouTube qualities, audio tracks,
+    ///   caption tracks and auto-translate languages with the current selection.
+    /// - `select`: applies a menu pick ({type: rate|quality|audio|captions|translate, id}).
     /// - `sync`: applies the Chrome tab's captured state; returns the status
     ///   protocol of `attemptApplyPlayerPrefs` (done/retry/ad/applied).
     /// YouTube goes through the #movie_player API; other sites fall back to the
@@ -1713,7 +1797,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     (function(req) {
         var p = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
         var yt = !!(p && typeof p.getAvailableAudioTracks === 'function' && typeof p.getOption === 'function');
-        var video = window.__floatVideoMainVideo || document.querySelector('video');
+        var video = \(mainVideoJS);
 
         function inAd() {
             return !!(p && p.classList && (p.classList.contains('ad-showing') || p.classList.contains('ad-interrupting')));
@@ -1798,6 +1882,16 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             return null;
         }
         function isTranslatable(c) { return !!(c.is_translateable || c.isTranslateable); }
+        function qualityInfo() {
+            try {
+                var cur = p.getPlaybackQuality(), label = '';
+                var list = p.getAvailableQualityData().filter(function(d) { return d.isPlayable; }).map(function(d) {
+                    if (d.quality === cur) label = d.qualityLabel;
+                    return { id: d.quality, label: d.qualityLabel };
+                });
+                return { qualities: list, quality: p.getPreferredQuality(), qualityLabel: label };
+            } catch (e) { return { qualities: [] }; }
+        }
         function translationCode(t) {
             return (t && t.translationLanguage && t.translationLanguage.languageCode) || '';
         }
@@ -1855,16 +1949,20 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     return { id: captionKey(c), label: String(c.displayName || c.languageName || c.languageCode || ''),
                              selected: c === selected };
                 });
+                var q = qualityInfo();
                 return {
                     source: 'youtube', audio: audio, captions: captions, captionsOn: !!cur,
                     translation: translationCode(cur),
                     translationLanguages: list.some(isTranslatable) ? translationLanguages().map(function(l) {
                         return { id: l.languageCode, label: l.languageName || l.languageCode };
-                    }) : []
+                    }) : [],
+                    rate: p.getPlaybackRate(), rates: p.getAvailablePlaybackRates(),
+                    qualities: q.qualities, quality: q.quality, qualityLabel: q.qualityLabel
                 };
             }
             if (video) {
-                var out = { source: 'html5', audio: [], captions: [], captionsOn: false };
+                var out = { source: 'html5', audio: [], captions: [], captionsOn: false,
+                            rate: video.playbackRate, rates: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] };
                 var ats = video.audioTracks, tts = video.textTracks, n, t;
                 for (n = 0; ats && n < ats.length; n++) {
                     t = ats[n];
@@ -1876,7 +1974,6 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     out.captions.push({ id: String(n), label: t.label || t.language || ('Track ' + (n + 1)), selected: t.mode === 'showing' });
                     if (t.mode === 'showing') out.captionsOn = true;
                 }
-                if (out.audio.length <= 1 && !out.captions.length) out.source = 'none';
                 return out;
             }
             return { source: 'none' };
@@ -1887,6 +1984,13 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 if (inAd()) return 'ad';
                 // A manual pick ends the float-time sync from the Chrome tab.
                 window.__floatVideoPrefsApplied = true;
+                if (req.type === 'rate' || req.type === 'quality') {
+                    try {
+                        if (req.type === 'rate') p.setPlaybackRate(Number(req.id));
+                        else p.setPlaybackQualityRange(req.id, req.id);
+                    } catch (e) { return 'error'; }
+                    return 'ok';
+                }
                 if (req.type === 'audio') {
                     var target = findAudio(req.id, false);
                     if (!target) return 'missing';
@@ -1919,6 +2023,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 setCaption(want);
                 settle(function() { return captionMatches(want); }, function() { setCaption(want); });
                 return captionMatches(want) ? 'ok' : 'pending';
+            }
+            if (video && req.type === 'rate') {
+                video.playbackRate = Number(req.id);
+                return 'ok';
             }
             if (video && req.type === 'audio' && video.audioTracks) {
                 for (var a = 0; a < video.audioTracks.length; a++) video.audioTracks[a].enabled = String(a) === req.id;
@@ -1991,7 +2099,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let js = "\(Self.mediaTracksJS)(JSON.parse(atob('\(data.base64EncodedString())')))"
         webView.evaluateJavaScript(js) { result, error in
             if let error = error {
-                NSLog("[FloatVideo] Media tracks JS error: \(error)")
+                NSLog("%@", "[FloatVideo] Media tracks JS error: \(logSafeError(error))")
             }
             completion?(result)
         }
@@ -2011,13 +2119,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
+        let source = info["source"] as? String ?? "none"
         let notice: String?
         if info["loading"] as? Bool == true {
             notice = "Player is still loading…"
         } else if info["ad"] as? Bool == true {
             notice = "Available after the ad"
-        } else if (info["source"] as? String ?? "none") == "none" {
-            notice = "No audio track or subtitle options for this video"
+        } else if source == "none" {
+            notice = "No video found"
         } else {
             notice = nil
         }
@@ -2028,7 +2137,32 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             return menu
         }
 
-        let audio = (info["audio"] as? [[String: Any]] ?? []).map { track -> NSMenuItem in
+        let rate = (info["rate"] as? NSNumber)?.doubleValue ?? 1
+        let rates = (info["rates"] as? [NSNumber] ?? []).map { $0.doubleValue }
+        addTrackSection(to: menu, title: "Speed", items: rates.map { r in
+            trackMenuItem(r == 1 ? "Normal" : String(format: "%gx", r), selected: abs(r - rate) < 0.01,
+                          request: ["type": "rate", "id": String(r)])
+        }, collapse: true)
+
+        let qualities = info["qualities"] as? [[String: Any]] ?? []
+        if !qualities.isEmpty {
+            let preferred = info["quality"] as? String ?? "auto"
+            let currentLabel = info["qualityLabel"] as? String ?? ""
+            let auto = trackMenuItem(currentLabel.isEmpty ? "Auto" : "Auto (\(currentLabel))",
+                                     selected: preferred == "auto", request: ["type": "quality", "id": "auto"])
+            addTrackSection(to: menu, title: "Quality", items: [auto] + qualities.map { q in
+                let id = q["id"] as? String ?? ""
+                return trackMenuItem(q["label"] as? String ?? id, selected: id == preferred,
+                                     request: ["type": "quality", "id": id])
+            }, collapse: true)
+        }
+
+        let audioInfo = info["audio"] as? [[String: Any]] ?? []
+        let captionInfo = info["captions"] as? [[String: Any]] ?? []
+        guard source == "youtube" || audioInfo.count > 1 || !captionInfo.isEmpty else { return menu }
+        menu.addItem(.separator())
+
+        let audio = audioInfo.map { track -> NSMenuItem in
             var label = track["label"] as? String ?? ""
             if track["autoDubbed"] as? Bool == true, label.range(of: "dub", options: .caseInsensitive) == nil {
                 label += " (auto-dubbed)"
@@ -2048,7 +2182,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         menu.addItem(.separator())
         let captionsOn = info["captionsOn"] as? Bool == true
         var subtitles = [trackMenuItem("Off", selected: !captionsOn, request: ["type": "captions", "id": ""])]
-        subtitles += (info["captions"] as? [[String: Any]] ?? []).map { track in
+        subtitles += captionInfo.map { track in
             trackMenuItem(track["label"] as? String ?? "", selected: track["selected"] as? Bool == true,
                           request: ["type": "captions", "id": track["id"] as? String ?? ""])
         }
@@ -2063,10 +2197,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     }
 
     /// Adds a titled group of radio-style items. Long lists (heavily dubbed
-    /// videos carry 20+ audio tracks) collapse into a submenu so the menu
-    /// stays on screen.
-    private func addTrackSection(to menu: NSMenu, title: String, items: [NSMenuItem]) {
-        if items.count > 8 {
+    /// videos carry 20+ audio tracks) and `collapse` sections go into a
+    /// submenu so the menu stays on screen.
+    private func addTrackSection(to menu: NSMenu, title: String, items: [NSMenuItem], collapse: Bool = false) {
+        if collapse || items.count > 8 {
             let current = items.first { $0.state == .on }?.title
             let parent = NSMenuItem(title: current.map { "\(title): \($0)" } ?? title,
                                     action: nil, keyEquivalent: "")
@@ -2137,7 +2271,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         runMediaTracksJS(request) { result in
             let type = request["type"] as? String ?? "?"
             let id = request["id"] as? String ?? ""
-            NSLog("[FloatVideo] Track menu: \(type)=\(id.isEmpty ? "off" : id) -> \(result as? String ?? "nil")")
+            NSLog("%@", "[FloatVideo] Track menu: \(type)=\(id.isEmpty ? "off" : id) -> \(result as? String ?? "nil")")
         }
     }
 
@@ -2180,7 +2314,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     private func pollVideoState() {
         let js = """
         (function() {
-            var v = document.querySelector('video');
+            var v = \(Self.mainVideoJS);
             if (v) {
                 // Consume any pending trusted-click request atomically with the
                 // current ad state so the native side never fires a stale click
@@ -2190,7 +2324,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 var mp = document.querySelector('#movie_player, .html5-video-player');
                 var ads = !!(mp && (mp.classList.contains('ad-showing') ||
                                     mp.classList.contains('ad-interrupting')));
-                return { ct: v.currentTime, dur: v.duration, vol: v.volume, muted: v.muted, paused: v.paused,
+                return { ct: v.currentTime, dur: v.duration, vol: v.volume, muted: v.muted, paused: v.paused, seeking: v.seeking,
                          skips: window.__floatVideoAdSkipCount || 0,
                          ff: window.__floatVideoAdFFCount || 0,
                          adSkipInstalled: !!window.__floatVideoAdSkipInstalled,
@@ -2201,12 +2335,25 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         })()
         """
         webView.evaluateJavaScript(js) { [weak self] result, _ in
-            guard let self = self, let dict = result as? [String: Any] else { return }
+            guard let self = self else { return }
+            guard let dict = result as? [String: Any] else {
+                // An embed whose video we can't reach can't report playback.
+                if self.loadingStrategy != .fullPageInject { self.hideLoadingOverlay() }
+                return
+            }
             let ct = dict["ct"] as? Double ?? 0
             let dur = dict["dur"] as? Double ?? 0
             let vol = dict["vol"] as? Double ?? 1
             let muted = dict["muted"] as? Bool ?? false
             let paused = dict["paused"] as? Bool ?? true
+            if self.loadingOverlay != nil, !paused, dict["seeking"] as? Bool != true,
+               let last = self.lastPolledTime, ct != last {
+                self.hideLoadingOverlay()
+            }
+            self.lastPolledTime = ct
+            if self.loadingOverlay == nil, dict["ads"] as? Bool != true {
+                self.playbackPosition = ct
+            }
 
             // Diagnostics: log whenever the in-page ad-skip guard has clicked Skip
             // since the last poll (the guard runs in-page, so surface it natively).
@@ -2235,7 +2382,9 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             // center; press it with a real mouse event. Only honor requests
             // whose same-poll snapshot still shows an ad, so a click can never
             // land on content after the ad ended between guard tick and poll.
-            if let tc = dict["tc"] as? [String: Any],
+            if self.currentSite == "youtube",
+               self.loadingStrategy == .fullPageInject,
+               let tc = dict["tc"] as? [String: Any],
                (dict["ads"] as? Bool) == true,
                let px = (tc["x"] as? NSNumber)?.doubleValue,
                let py = (tc["y"] as? NSNumber)?.doubleValue {
@@ -2247,8 +2396,11 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 let fraction = CGFloat(ct / dur)
                 self.progressPlayed.frame.size.width = self.progressBg.frame.width * fraction
             }
-            // Update time label
+            // Update time label; a narrow window shows only the position.
             self.timeLabel.stringValue = "\(self.formatTime(ct)) / \(self.formatTime(dur))"
+            if self.timeLabel.intrinsicContentSize.width > self.timeLabel.frame.width {
+                self.timeLabel.stringValue = self.formatTime(ct)
+            }
             // Sync play state (observed)
             self.isPlaying = !paused
             self.setButtonSymbol(self.playPauseButton, paused ? "play.fill" : "pause.fill")
@@ -2272,6 +2424,13 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 }
             }
         }
+    }
+
+    // Autoresizing can't do this: a width clamped at 0 in a narrow window comes back wrong.
+    private func layoutTimeLabel() {
+        guard let label = timeLabel, let slider = volumeSlider, let settings = settingsButton else { return }
+        let left = slider.frame.maxX + 4
+        label.frame = NSRect(x: left, y: label.frame.minY, width: max(0, settings.frame.minX - left), height: label.frame.height)
     }
 
     private func formatTime(_ seconds: Double) -> String {
@@ -2316,6 +2475,22 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     }
 
     private func cursorForEdge(_ edge: ResizeEdge) -> NSCursor {
+        // Older Swift toolchains lack the macOS 15 SDK's frameResize API.
+        #if compiler(>=6.0)
+        if #available(macOS 15, *) {
+            switch edge {
+            case .left: return .frameResize(position: .left, directions: .all)
+            case .right: return .frameResize(position: .right, directions: .all)
+            case .top: return .frameResize(position: .top, directions: .all)
+            case .bottom: return .frameResize(position: .bottom, directions: .all)
+            case .topLeft: return .frameResize(position: .topLeft, directions: .all)
+            case .topRight: return .frameResize(position: .topRight, directions: .all)
+            case .bottomLeft: return .frameResize(position: .bottomLeft, directions: .all)
+            case .bottomRight: return .frameResize(position: .bottomRight, directions: .all)
+            case .none: return .arrow
+            }
+        }
+        #endif
         switch edge {
         case .left, .right: return .resizeLeftRight
         case .top, .bottom: return .resizeUpDown
@@ -2329,6 +2504,18 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
     override func sendEvent(_ event: NSEvent) {
         switch event.type {
+        case .mouseMoved, .cursorUpdate:
+            if isResizing {
+                cursorForEdge(resizeEdge).set()
+                return
+            }
+            let location = event.locationInWindow
+            let edge = detectResizeEdge(at: location)
+            if edge != .none,
+               !(edge == .top && titleBarView.alphaValue > 0 && titleBarView.frame.contains(location)) {
+                cursorForEdge(edge).set()
+                return
+            }
         case .leftMouseDown:
             // Synthetic trusted clicks (ad skip) must reach the web view even
             // when they land inside the resize border.
@@ -2337,12 +2524,13 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             let edge = detectResizeEdge(at: location)
             if edge != .none {
                 // When title bar is visible, drag takes priority over top-edge resize
-                if titleBarView.alphaValue > 0,
+                if edge == .top, titleBarView.alphaValue > 0,
                    titleBarView.frame.contains(location) {
                     break // Let DraggableTitleBar handle the drag
                 }
                 isResizing = true
                 resizeEdge = edge
+                cursorForEdge(edge).set()
                 initialMouseLocation = NSEvent.mouseLocation
                 initialWindowFrame = self.frame
                 return
@@ -2365,14 +2553,6 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
 
     // MARK: - Mouse Handling
 
-    override func mouseMoved(with event: NSEvent) {
-        // Show/hide driven by cursor polling; only update resize cursor here.
-        let location = event.locationInWindow
-        let edge = detectResizeEdge(at: location)
-        cursorForEdge(edge).set()
-        super.mouseMoved(with: event)
-    }
-
     override func mouseDown(with event: NSEvent) {
         // Resize handled by sendEvent interception, title bar drag handled by DraggableTitleBar
         super.mouseDown(with: event)
@@ -2383,6 +2563,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             super.mouseDragged(with: event)
             return
         }
+        cursorForEdge(resizeEdge).set()
 
         let currentMouse = NSEvent.mouseLocation
         let deltaX = currentMouse.x - initialMouseLocation.x
@@ -2402,6 +2583,16 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             newFrame.size.width = newFrame.size.height * videoAspectRatio
         case .none:
             break
+        }
+
+        switch resizeEdge {
+        case .topLeft, .topRight, .bottomLeft, .bottomRight:
+            let dh = (resizeEdge == .topLeft || resizeEdge == .topRight) ? deltaY : -deltaY
+            let verticalWidth = (initialWindowFrame.height + dh) * videoAspectRatio
+            if abs(verticalWidth - initialWindowFrame.width) > abs(newFrame.width - initialWindowFrame.width) {
+                newFrame.size.width = verticalWidth
+            }
+        default: break
         }
 
         // Horizontal/diagonal drag: derive height from width, maintain aspect ratio

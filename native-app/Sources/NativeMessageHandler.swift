@@ -1,6 +1,25 @@
 import Foundation
 import Cocoa
 
+func logSafeURL(_ string: String) -> String {
+    guard var components = URLComponents(string: string),
+          components.scheme != nil, components.host != nil else {
+        return "<invalid url>"
+    }
+    components.user = nil
+    components.password = nil
+    components.path = ""
+    components.query = nil
+    components.fragment = nil
+    return components.string ?? "<invalid url>"
+}
+
+func logSafeError(_ error: Error) -> String {
+    let error = error as NSError
+    let text = error.userInfo["WKJavaScriptExceptionMessage"] as? String ?? error.localizedDescription
+    return "\(error.domain) \(error.code): \(text)"
+}
+
 // MARK: - NativeMessageHandler — Chrome Native Messaging Protocol
 
 /// Chrome Native Messaging protocol implementation
@@ -24,7 +43,7 @@ class NativeMessageHandler {
         switch action {
         case "open":
             let site = message["site"] as? String ?? "generic"
-            let url = truncated(message["url"] as? String ?? "")
+            let url = logSafeURL(message["url"] as? String ?? "")
             let width = message["width"] ?? "?"
             let height = message["height"] ?? "?"
             let currentTime = message["currentTime"] ?? 0
@@ -119,10 +138,10 @@ class NativeMessageHandler {
                 NSLog("[FloatVideo] Message is not a JSON object")
                 return nil
             }
-            NSLog("[FloatVideo] Received message summary: \(summarizeIncomingMessage(json))")
+            NSLog("%@", "[FloatVideo] Received message summary: \(summarizeIncomingMessage(json))")
             return json
         } catch {
-            NSLog("[FloatVideo] JSON parse error: \(error)")
+            NSLog("%@", "[FloatVideo] JSON parse error: \(error)")
             return nil
         }
     }
@@ -136,17 +155,14 @@ class NativeMessageHandler {
             do {
                 let jsonData = try JSONSerialization.data(withJSONObject: message)
 
-                // 1. Write 4-byte length prefix (little-endian)
                 var length = UInt32(jsonData.count)
                 let lengthData = Data(bytes: &length, count: 4)
 
-                // 2. Write JSON message body
-                self.outputHandle.write(lengthData)
-                self.outputHandle.write(jsonData)
+                try self.outputHandle.write(contentsOf: lengthData + jsonData)
 
-                NSLog("[FloatVideo] Sent message summary: \(self.summarizeOutgoingMessage(message))")
+                NSLog("%@", "[FloatVideo] Sent message summary: \(self.summarizeOutgoingMessage(message))")
             } catch {
-                NSLog("[FloatVideo] Failed to serialize message: \(error)")
+                NSLog("%@", "[FloatVideo] Failed to send message: \(error)")
             }
         }
     }

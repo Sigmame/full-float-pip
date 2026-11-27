@@ -12,9 +12,10 @@ class LocalHTTPServer {
     func start(completion: @escaping (UInt16) -> Void) {
         do {
             let params = NWParameters.tcp
-            listener = try NWListener(using: params, on: .any)
+            params.requiredLocalEndpoint = NWEndpoint.hostPort(host: .ipv4(.loopback), port: .any)
+            listener = try NWListener(using: params)
         } catch {
-            NSLog("[FloatVideo] HTTP server failed to create listener: \(error)")
+            NSLog("%@", "[FloatVideo] HTTP server failed to create listener: \(error)")
             return
         }
 
@@ -28,7 +29,7 @@ class LocalHTTPServer {
                     completion(port)
                 }
             case .failed(let error):
-                NSLog("[FloatVideo] HTTP server failed: \(error)")
+                NSLog("%@", "[FloatVideo] HTTP server failed: \(error)")
             default:
                 break
             }
@@ -101,28 +102,21 @@ class LocalHTTPServer {
 
         let queryItems = urlComponents.queryItems ?? []
         let videoId = queryItems.first(where: { $0.name == "v" })?.value ?? ""
-        let site = queryItems.first(where: { $0.name == "site" })?.value ?? "youtube"
         let startTime = queryItems.first(where: { $0.name == "t" })?.value ?? "0"
         let safeWidth = max(Int(queryItems.first(where: { $0.name == "w" })?.value ?? "") ?? 640, 200)
         let safeHeight = max(Int(queryItems.first(where: { $0.name == "h" })?.value ?? "") ?? 360, 200)
 
-        if videoId.isEmpty {
-            sendErrorResponse(connection: connection, code: 400, message: "Missing video ID")
+        guard videoId.range(of: "\\A[A-Za-z0-9_-]+\\z", options: .regularExpression) != nil else {
+            sendErrorResponse(connection: connection, code: 400, message: "Invalid video ID")
             return
         }
 
-        let html: String
-        switch site {
-        case "youtube":
-            html = buildYouTubePlayerHTML(
-                videoId: videoId,
-                startTime: startTime,
-                safeWidth: safeWidth,
-                safeHeight: safeHeight
-            )
-        default:
-            html = buildGenericEmbedHTML(videoId: videoId)
-        }
+        let html = buildYouTubePlayerHTML(
+            videoId: videoId,
+            startTime: startTime,
+            safeWidth: safeWidth,
+            safeHeight: safeHeight
+        )
 
         sendResponse(connection: connection, body: html, contentType: "text/html; charset=utf-8")
     }
@@ -280,25 +274,6 @@ class LocalHTTPServer {
         """
     }
 
-    private func buildGenericEmbedHTML(videoId: String) -> String {
-        return """
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <meta charset="utf-8">
-            <style>
-                * { margin: 0; padding: 0; }
-                html, body { width: 100%; height: 100%; background: #000; overflow: hidden; }
-                iframe { width: 100%; height: 100%; border: none; }
-            </style>
-        </head>
-        <body>
-            <iframe src="\(videoId)" allow="autoplay; encrypted-media" allowfullscreen></iframe>
-        </body>
-        </html>
-        """
-    }
-
     // MARK: - HTTP Response
 
     private func sendResponse(connection: NWConnection, body: String, contentType: String) {
@@ -307,7 +282,6 @@ class LocalHTTPServer {
         HTTP/1.1 200 OK\r
         Content-Type: \(contentType)\r
         Content-Length: \(bodyData.count)\r
-        Access-Control-Allow-Origin: *\r
         Connection: close\r
         \r
 
