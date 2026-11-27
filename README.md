@@ -47,6 +47,7 @@ No window switching. No split screen. No leaving fullscreen. Just code and video
 - **PiP-Style UI** — Clean, borderless video window; controls appear on hover
 - **YouTube-Style Control Bar** — Play/pause, skip back/forward 10s, volume slider, progress bar with seek, time display
 - **Playback Settings** — Pick the speed, the quality (YouTube), the audio language (incl. dubbed / auto-dubbed tracks), subtitles and auto-translate from the ⚙ button; the Chrome tab's current choice is carried over when you float
+- **Tab Sync** — While the float is open, the tab's video stays paused under a "Playing in PiP" placeholder; closing the float moves the tab to the float's position, and clicking the placeholder (or pressing P) continues playback in the tab
 - **Auto Video Detection** — Badge shows video count; auto-detects SPA navigation (YouTube, Bilibili)
 - **Aspect Ratio Lock** — Window maintains video aspect ratio during resize
 - **Position Memory** — Remembers window position and size between sessions

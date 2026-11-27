@@ -78,6 +78,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     private var loadingOverlay: NSView?
     private var playbackStarted = false
     private var lastPolledTime: Double?
+    /// Last content position seen after loading, outside ads; reported to the tab when the window closes.
+    private(set) var playbackPosition: Double?
     private var hasTriedYouTubeEmbedFallback = false
     private var youtubeEmbedFallbackURL: URL?
     private var youtubeFallbackWorkItem: DispatchWorkItem?
@@ -2349,6 +2351,9 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 self.hideLoadingOverlay()
             }
             self.lastPolledTime = ct
+            if self.loadingOverlay == nil, dict["ads"] as? Bool != true {
+                self.playbackPosition = ct
+            }
 
             // Diagnostics: log whenever the in-page ad-skip guard has clicked Skip
             // since the last poll (the guard runs in-page, so surface it natively).

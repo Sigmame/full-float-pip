@@ -75,11 +75,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             ])
 
         case "close":
+            let position = floatWindow?.playbackPosition
             closeFloatWindow()
-            messageHandler?.sendMessage([
-                "type": "status",
-                "status": "closed"
-            ])
+            messageHandler?.sendMessage(closedStatus(position))
 
         case "ping":
             messageHandler?.sendMessage([
@@ -124,14 +122,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         )
 
         floatWindow?.onClose = { [weak self] in
-            self?.floatWindow = nil
-            self?.messageHandler?.sendMessage([
-                "type": "status",
-                "status": "closed"
-            ])
+            guard let self = self else { return }
+            let position = self.floatWindow?.playbackPosition
+            self.floatWindow = nil
+            self.messageHandler?.sendMessage(self.closedStatus(position))
         }
 
         floatWindow?.show()
+    }
+
+    /// The position lets the tab continue where the float stopped.
+    private func closedStatus(_ position: Double?) -> [String: Any] {
+        var status: [String: Any] = ["type": "status", "status": "closed"]
+        if let position = position { status["currentTime"] = position }
+        return status
     }
 
     func closeFloatWindow() {

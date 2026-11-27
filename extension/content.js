@@ -198,9 +198,11 @@
     }
   }
 
-  // Pauses the video and covers it with a grey overlay and a spinner until the float window opens.
-  const floatFeedback = {
+  // Mirrors the float window on the tab's video, like Chrome's PiP placeholder: a grey overlay while the float opens,
+  // "Playing in PiP" while it is open (the tab's video stays paused), and the float's position copied back on close.
+  const floatSession = {
     host: null,
+    state: null, // 'opening' | 'floating' | 'failed'
 
     start(video) {
       if (this.host) return;
@@ -223,15 +225,22 @@
       const detail = document.createElement('div');
       detail.className = 'detail';
       host.attachShadow({ mode: 'closed' }).append(style, spinner, text, detail);
+      host.addEventListener('click', () => this.returnHere());
       (document.fullscreenElement || document.documentElement).appendChild(host);
-      this.host = host;
-      this.parts = { spinner, text, detail };
-      this.video = video;
-      this.wasPlaying = wasPlaying;
+
+      Object.assign(this, { host, video, wasPlaying, state: 'opening', href: location.href, parts: { spinner, text, detail } });
+      // Playing here while the float is open would play the video twice.
+      this.onPlay = () => {
+        video.pause();
+        this.returnHere();
+      };
+      video.addEventListener('play', this.onPlay);
       // The window may still have opened, so a timeout doesn't resume the tab's video.
-      this.timer = setTimeout(() => this.finish(false, 'No response from the FloatVideo app', false), 20000);
+      this.timer = setTimeout(() => this.failed('No response from the FloatVideo app', false), 20000);
       const place = () => {
-        if (!host.isConnected) return;
+        if (this.host !== host) return;
+        // Another page (SPA navigation) is no longer the floated video.
+        if (location.href !== this.href) return this.end();
         const r = video.getBoundingClientRect();
         Object.assign(host.style, { left: r.left + 'px', top: r.top + 'px', width: r.width + 'px', height: r.height + 'px' });
         requestAnimationFrame(place);
@@ -239,21 +248,57 @@
       place();
     },
 
-    finish(opened, error, resume = !opened) {
-      const { host, parts, video, wasPlaying } = this;
-      if (!host) return;
-      this.host = null;
+    opened() {
+      if (this.state !== 'opening') return;
       clearTimeout(this.timer);
-      const remove = () => {
-        host.style.opacity = '0';
-        setTimeout(() => host.remove(), 200);
+      this.state = 'floating';
+      this.parts.spinner.remove();
+      this.parts.text.textContent = 'Playing in PiP';
+      this.parts.detail.textContent = 'Click or press P to continue here';
+      this.host.style.cursor = 'pointer';
+    },
+
+    // Closes the float; its position comes back as FLOAT_STATUS 'closed' with resume set.
+    returnHere() {
+      if (this.state !== 'floating') return;
+      chrome.runtime.sendMessage({ type: 'RETURN_TO_TAB' }).then(r => {
+        if (!r?.success) this.end();
+      }).catch(() => this.end());
+    },
+
+    closed(currentTime, resume) {
+      const { video } = this;
+      if (!this.end()) return;
+      if (typeof currentTime === 'number') video.currentTime = currentTime;
+      if (resume) video.play().catch(() => { });
+    },
+
+    failed(error, resume = true) {
+      if (this.state !== 'opening') return;
+      const { video, wasPlaying } = this;
+      clearTimeout(this.timer);
+      this.state = 'failed';
+      video.removeEventListener('play', this.onPlay);
+      this.parts.spinner.remove();
+      this.parts.text.textContent = "Couldn't open PiP";
+      this.parts.detail.textContent = error || '';
+      setTimeout(() => {
+        this.end();
         if (resume && wasPlaying) video.play().catch(() => { });
-      };
-      if (opened) return remove();
-      parts.spinner.remove();
-      parts.text.textContent = "Couldn't open PiP";
-      parts.detail.textContent = error || '';
-      setTimeout(remove, 2500);
+      }, 2500);
+    },
+
+    // Removes the overlay and stops mirroring; false if nothing was shown.
+    end() {
+      const { host } = this;
+      if (!host) return false;
+      clearTimeout(this.timer);
+      this.video.removeEventListener('play', this.onPlay);
+      this.host = null;
+      this.state = null;
+      host.style.opacity = '0';
+      setTimeout(() => host.remove(), 200);
+      return true;
     },
   };
 
@@ -288,10 +333,11 @@
     const target = e.composedPath()[0];
     if (['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName) || target.isContentEditable) return;
 
-    // A second P while the float is opening does nothing.
-    if (floatFeedback.host) {
+    // P again brings the video back from the float; while it opens, P does nothing.
+    if (floatSession.host) {
       e.preventDefault();
       e.stopPropagation();
+      floatSession.returnHere();
       return;
     }
     const [video] = detector.scanForVideos();
@@ -299,11 +345,11 @@
 
     e.preventDefault();
     e.stopPropagation();
-    floatFeedback.start(detector.mainVideo);
+    floatSession.start(detector.mainVideo);
     // Success and asynchronous failures arrive as FLOAT_STATUS.
     chrome.runtime.sendMessage({ type: 'FLOAT_HOTKEY', videoInfo: video }).then(r => {
-      if (!r?.success) floatFeedback.finish(false, r?.error);
-    }).catch(err => floatFeedback.finish(false, err.message));
+      if (!r?.success) floatSession.failed(r?.error);
+    }).catch(err => floatSession.failed(err.message));
   }, true);
 
   // Handle messages from popup/background
@@ -318,7 +364,7 @@
       if (!detector.mainVideo?.isConnected) detector.scanForVideos();
 
       if (detector.mainVideo) {
-        floatFeedback.start(detector.mainVideo);
+        floatSession.start(detector.mainVideo);
         sendResponse({
           success: true,
           videoInfo: detector.detectedVideos[0],
@@ -330,7 +376,9 @@
     }
 
     if (message.type === 'FLOAT_STATUS') {
-      floatFeedback.finish(message.status === 'opened', message.error);
+      if (message.status === 'opened') floatSession.opened();
+      else if (message.status === 'failed') floatSession.failed(message.error);
+      else if (message.status === 'closed') floatSession.closed(message.currentTime, message.resume);
     }
 
     return false;

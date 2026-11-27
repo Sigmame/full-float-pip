@@ -91,6 +91,9 @@ class FloatVideoManager {
         this.isConnecting = false;
         this.floatingInProgress = false;
         this.pendingTabId = null; // tab waiting for FLOAT_STATUS
+        this.floatTabId = null; // tab whose video is in the open float
+        this.resumeOnClose = false;
+        this.closedWaiter = null;
     }
 
     // Establish persistent connection with Native App
@@ -112,6 +115,7 @@ class FloatVideoManager {
                 this.nativePort = null;
                 this.isConnecting = false;
                 this._sendFloatStatus('failed', err?.message || 'The FloatVideo app quit');
+                this._floatClosed();
             });
 
             this.isConnecting = false;
@@ -147,6 +151,12 @@ class FloatVideoManager {
         if (this.nativePort) {
             // Notify native app to close current window, then disconnect
             try { this.nativePort.postMessage({ action: 'close' }); } catch(e) {}
+            // An open float reports its position on close; let that reach its tab first.
+            if (this.floatTabId != null) {
+                await new Promise(r => { this.closedWaiter = r; setTimeout(r, 500); });
+                this.closedWaiter = null;
+                this._floatClosed();
+            }
             this.nativePort.disconnect();
             this.nativePort = null;
             this.isConnecting = false;
@@ -239,8 +249,23 @@ class FloatVideoManager {
             console.error('[FloatVideo] Native error:', msg.error);
             this._sendFloatStatus('failed', msg.error);
         } else if (msg.type === 'status' && msg.status === 'opened') {
+            this.floatTabId = this.pendingTabId;
             this._sendFloatStatus('opened');
+        } else if (msg.type === 'status' && msg.status === 'closed') {
+            this._floatClosed(msg.currentTime);
         }
+    }
+
+    // Hands the float's last position back to its tab, which continues from there.
+    _floatClosed(currentTime) {
+        const tabId = this.floatTabId;
+        const resume = this.resumeOnClose;
+        this.floatTabId = null;
+        this.resumeOnClose = false;
+        if (tabId != null) {
+            chrome.tabs.sendMessage(tabId, { type: 'FLOAT_STATUS', status: 'closed', currentTime, resume }).catch(() => { });
+        }
+        this.closedWaiter?.();
     }
 
     // Tells the tab that asked for the float whether the window opened, so it can drop its loading overlay.
@@ -302,6 +327,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
                 const result = await manager.floatVideo(message.videoInfo, sender.tab.id);
                 sendResponse(result);
             })();
+            break;
+        }
+
+        case 'RETURN_TO_TAB': {
+            const ok = !!sender.tab && sender.tab.id === manager.floatTabId && !!manager.nativePort;
+            if (ok) {
+                manager.resumeOnClose = true;
+                manager.closeFloat();
+            }
+            sendResponse({ success: ok });
             break;
         }
 
