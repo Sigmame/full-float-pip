@@ -47,6 +47,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     private var controlBarView: NSView!
     private var playPauseButton: NSButton!
     private var skipButton: NSButton!
+    private var settingsButton: NSButton!
     private var volumeButton: NSButton!
     private var volumeSlider: NSSlider!
     private var timeLabel: NSTextField!
@@ -155,6 +156,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         NotificationCenter.default.addObserver(forName: NSWindow.didResizeNotification,
             object: self, queue: .main) { [weak self] _ in
             self?.scheduleInjectedLayoutRefresh()
+            self?.layoutTimeLabel()
         }
 
         // Key setting 3: Floating panel properties
@@ -327,6 +329,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         controlBarView.addSubview(ppBtn)
         x += 32
 
+        let backBtn = makeControlButton(x: x, symbolName: "gobackward.10", action: #selector(skipBackward))
+        controlBarView.addSubview(backBtn)
+        x += 32
+
         // Skip 10s
         let skipBtn = makeControlButton(x: x, symbolName: "goforward.10", action: #selector(skipForward))
         self.skipButton = skipBtn
@@ -352,8 +358,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         self.volumeSlider = slider
         x += 64
 
-        // Time label (right-aligned, left of the track menu button)
-        let tLabel = NSTextField(frame: NSRect(x: width - 136, y: 8, width: 92, height: 20))
+        // Time label (right-aligned, between the volume slider and the settings button; see layoutTimeLabel)
+        let tLabel = NSTextField(frame: NSRect(x: x, y: 8, width: 0, height: 20))
         tLabel.stringValue = "0:00 / 0:00"
         tLabel.isEditable = false
         tLabel.isBordered = false
@@ -372,6 +378,8 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         tracksBtn.autoresizingMask = [.minXMargin]
         tracksBtn.toolTip = "Playback settings"
         controlBarView.addSubview(tracksBtn)
+        self.settingsButton = tracksBtn
+        layoutTimeLabel()
 
         container.addSubview(controlBarView)
 
@@ -1701,6 +1709,11 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         setButtonSymbol(playPauseButton, isPlaying ? "pause.fill" : "play.fill")
     }
 
+    @objc func skipBackward() {
+        videoJS("v.currentTime = Math.max(0, v.currentTime - 10)",
+                youtubeCmd: "playerCommand('seek', Math.max(0, (window.getPlayerState()?.ct||0)-10))")
+    }
+
     @objc func skipForward() {
         videoJS("v.currentTime += 10",
                 youtubeCmd: "playerCommand('seek', (window.getPlayerState()?.ct||0)+10)")
@@ -2345,8 +2358,11 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 let fraction = CGFloat(ct / dur)
                 self.progressPlayed.frame.size.width = self.progressBg.frame.width * fraction
             }
-            // Update time label
+            // Update time label; a narrow window shows only the position.
             self.timeLabel.stringValue = "\(self.formatTime(ct)) / \(self.formatTime(dur))"
+            if self.timeLabel.intrinsicContentSize.width > self.timeLabel.frame.width {
+                self.timeLabel.stringValue = self.formatTime(ct)
+            }
             // Sync play state (observed)
             self.isPlaying = !paused
             self.setButtonSymbol(self.playPauseButton, paused ? "play.fill" : "pause.fill")
@@ -2370,6 +2386,13 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 }
             }
         }
+    }
+
+    // Autoresizing can't do this: a width clamped at 0 in a narrow window comes back wrong.
+    private func layoutTimeLabel() {
+        guard let label = timeLabel, let slider = volumeSlider, let settings = settingsButton else { return }
+        let left = slider.frame.maxX + 4
+        label.frame = NSRect(x: left, y: label.frame.minY, width: max(0, settings.frame.minX - left), height: label.frame.height)
     }
 
     private func formatTime(_ seconds: Double) -> String {

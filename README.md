@@ -45,7 +45,7 @@ No window switching. No split screen. No leaving fullscreen. Just code and video
 - **Truly Always-on-Top** — Floats above ALL apps including macOS fullscreen applications
 - **Cross-Space Visibility** — Video window visible across all macOS Desktops / Spaces
 - **PiP-Style UI** — Clean, borderless video window; controls appear on hover
-- **YouTube-Style Control Bar** — Play/pause, skip 10s, volume slider, progress bar with seek, time display
+- **YouTube-Style Control Bar** — Play/pause, skip back/forward 10s, volume slider, progress bar with seek, time display
 - **Playback Settings** — Pick the speed, the quality (YouTube), the audio language (incl. dubbed / auto-dubbed tracks), subtitles and auto-translate from the ⚙ button; the Chrome tab's current choice is carried over when you float
 - **Auto Video Detection** — Badge shows video count; auto-detects SPA navigation (YouTube, Bilibili)
 - **Aspect Ratio Lock** — Window maintains video aspect ratio during resize
@@ -116,7 +116,7 @@ Then load the extension in Chrome:
 - **Title bar** — Drag to move; close (red), opacity toggle (yellow), pin indicator (green)
 - **Progress bar** — Click anywhere to seek; red bar shows playback position
 - **Play/Pause** — Toggle playback
-- **Skip 10s** — Jump forward 10 seconds
+- **Skip 10s** — Jump back or forward 10 seconds
 - **Volume** — Mute toggle + slider
 - **Time display** — Current position / total duration
 - **⚙ Playback settings** — Choose the speed, the YouTube quality, the audio track, subtitles/CC (or Off) and an auto-translate language
