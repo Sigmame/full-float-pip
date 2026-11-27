@@ -366,11 +366,11 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         self.timeLabel = tLabel
         controlBarView.addSubview(tLabel)
 
-        // Audio track & subtitles menu (far right, clear of the resize border)
+        // Playback settings menu (far right, clear of the resize border)
         let tracksBtn = makeControlButton(x: width - 44, symbolName: "gearshape.fill",
                                           action: #selector(showTrackMenu(_:)))
         tracksBtn.autoresizingMask = [.minXMargin]
-        tracksBtn.toolTip = "Audio track & subtitles"
+        tracksBtn.toolTip = "Playback settings"
         controlBarView.addSubview(tracksBtn)
 
         container.addSubview(controlBarView)
@@ -1748,9 +1748,9 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     /// In-page helper behind the track menu and the float-time prefs sync.
     /// Called as `(source)(request)`; re-evaluated on every use because a full
     /// in-page navigation wipes the JS world. Actions:
-    /// - `query`: lists audio tracks, caption tracks and auto-translate
-    ///   languages with the current selection.
-    /// - `select`: applies a menu pick ({type: audio|captions|translate, id}).
+    /// - `query`: lists playback rates, YouTube qualities, audio tracks,
+    ///   caption tracks and auto-translate languages with the current selection.
+    /// - `select`: applies a menu pick ({type: rate|quality|audio|captions|translate, id}).
     /// - `sync`: applies the Chrome tab's captured state; returns the status
     ///   protocol of `attemptApplyPlayerPrefs` (done/retry/ad/applied).
     /// YouTube goes through the #movie_player API; other sites fall back to the
@@ -1844,6 +1844,16 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             return null;
         }
         function isTranslatable(c) { return !!(c.is_translateable || c.isTranslateable); }
+        function qualityInfo() {
+            try {
+                var cur = p.getPlaybackQuality(), label = '';
+                var list = p.getAvailableQualityData().filter(function(d) { return d.isPlayable; }).map(function(d) {
+                    if (d.quality === cur) label = d.qualityLabel;
+                    return { id: d.quality, label: d.qualityLabel };
+                });
+                return { qualities: list, quality: p.getPreferredQuality(), qualityLabel: label };
+            } catch (e) { return { qualities: [] }; }
+        }
         function translationCode(t) {
             return (t && t.translationLanguage && t.translationLanguage.languageCode) || '';
         }
@@ -1901,16 +1911,20 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     return { id: captionKey(c), label: String(c.displayName || c.languageName || c.languageCode || ''),
                              selected: c === selected };
                 });
+                var q = qualityInfo();
                 return {
                     source: 'youtube', audio: audio, captions: captions, captionsOn: !!cur,
                     translation: translationCode(cur),
                     translationLanguages: list.some(isTranslatable) ? translationLanguages().map(function(l) {
                         return { id: l.languageCode, label: l.languageName || l.languageCode };
-                    }) : []
+                    }) : [],
+                    rate: p.getPlaybackRate(), rates: p.getAvailablePlaybackRates(),
+                    qualities: q.qualities, quality: q.quality, qualityLabel: q.qualityLabel
                 };
             }
             if (video) {
-                var out = { source: 'html5', audio: [], captions: [], captionsOn: false };
+                var out = { source: 'html5', audio: [], captions: [], captionsOn: false,
+                            rate: video.playbackRate, rates: [0.25, 0.5, 0.75, 1, 1.25, 1.5, 1.75, 2] };
                 var ats = video.audioTracks, tts = video.textTracks, n, t;
                 for (n = 0; ats && n < ats.length; n++) {
                     t = ats[n];
@@ -1922,7 +1936,6 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                     out.captions.push({ id: String(n), label: t.label || t.language || ('Track ' + (n + 1)), selected: t.mode === 'showing' });
                     if (t.mode === 'showing') out.captionsOn = true;
                 }
-                if (out.audio.length <= 1 && !out.captions.length) out.source = 'none';
                 return out;
             }
             return { source: 'none' };
@@ -1933,6 +1946,13 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 if (inAd()) return 'ad';
                 // A manual pick ends the float-time sync from the Chrome tab.
                 window.__floatVideoPrefsApplied = true;
+                if (req.type === 'rate' || req.type === 'quality') {
+                    try {
+                        if (req.type === 'rate') p.setPlaybackRate(Number(req.id));
+                        else p.setPlaybackQualityRange(req.id, req.id);
+                    } catch (e) { return 'error'; }
+                    return 'ok';
+                }
                 if (req.type === 'audio') {
                     var target = findAudio(req.id, false);
                     if (!target) return 'missing';
@@ -1965,6 +1985,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
                 setCaption(want);
                 settle(function() { return captionMatches(want); }, function() { setCaption(want); });
                 return captionMatches(want) ? 'ok' : 'pending';
+            }
+            if (video && req.type === 'rate') {
+                video.playbackRate = Number(req.id);
+                return 'ok';
             }
             if (video && req.type === 'audio' && video.audioTracks) {
                 for (var a = 0; a < video.audioTracks.length; a++) video.audioTracks[a].enabled = String(a) === req.id;
@@ -2057,13 +2081,14 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         let menu = NSMenu()
         menu.autoenablesItems = false
 
+        let source = info["source"] as? String ?? "none"
         let notice: String?
         if info["loading"] as? Bool == true {
             notice = "Player is still loading…"
         } else if info["ad"] as? Bool == true {
             notice = "Available after the ad"
-        } else if (info["source"] as? String ?? "none") == "none" {
-            notice = "No audio track or subtitle options for this video"
+        } else if source == "none" {
+            notice = "No video found"
         } else {
             notice = nil
         }
@@ -2074,7 +2099,32 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
             return menu
         }
 
-        let audio = (info["audio"] as? [[String: Any]] ?? []).map { track -> NSMenuItem in
+        let rate = (info["rate"] as? NSNumber)?.doubleValue ?? 1
+        let rates = (info["rates"] as? [NSNumber] ?? []).map { $0.doubleValue }
+        addTrackSection(to: menu, title: "Speed", items: rates.map { r in
+            trackMenuItem(r == 1 ? "Normal" : String(format: "%gx", r), selected: abs(r - rate) < 0.01,
+                          request: ["type": "rate", "id": String(r)])
+        }, collapse: true)
+
+        let qualities = info["qualities"] as? [[String: Any]] ?? []
+        if !qualities.isEmpty {
+            let preferred = info["quality"] as? String ?? "auto"
+            let currentLabel = info["qualityLabel"] as? String ?? ""
+            let auto = trackMenuItem(currentLabel.isEmpty ? "Auto" : "Auto (\(currentLabel))",
+                                     selected: preferred == "auto", request: ["type": "quality", "id": "auto"])
+            addTrackSection(to: menu, title: "Quality", items: [auto] + qualities.map { q in
+                let id = q["id"] as? String ?? ""
+                return trackMenuItem(q["label"] as? String ?? id, selected: id == preferred,
+                                     request: ["type": "quality", "id": id])
+            }, collapse: true)
+        }
+
+        let audioInfo = info["audio"] as? [[String: Any]] ?? []
+        let captionInfo = info["captions"] as? [[String: Any]] ?? []
+        guard source == "youtube" || audioInfo.count > 1 || !captionInfo.isEmpty else { return menu }
+        menu.addItem(.separator())
+
+        let audio = audioInfo.map { track -> NSMenuItem in
             var label = track["label"] as? String ?? ""
             if track["autoDubbed"] as? Bool == true, label.range(of: "dub", options: .caseInsensitive) == nil {
                 label += " (auto-dubbed)"
@@ -2094,7 +2144,7 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
         menu.addItem(.separator())
         let captionsOn = info["captionsOn"] as? Bool == true
         var subtitles = [trackMenuItem("Off", selected: !captionsOn, request: ["type": "captions", "id": ""])]
-        subtitles += (info["captions"] as? [[String: Any]] ?? []).map { track in
+        subtitles += captionInfo.map { track in
             trackMenuItem(track["label"] as? String ?? "", selected: track["selected"] as? Bool == true,
                           request: ["type": "captions", "id": track["id"] as? String ?? ""])
         }
@@ -2109,10 +2159,10 @@ class FloatWindow: NSPanel, WKNavigationDelegate {
     }
 
     /// Adds a titled group of radio-style items. Long lists (heavily dubbed
-    /// videos carry 20+ audio tracks) collapse into a submenu so the menu
-    /// stays on screen.
-    private func addTrackSection(to menu: NSMenu, title: String, items: [NSMenuItem]) {
-        if items.count > 8 {
+    /// videos carry 20+ audio tracks) and `collapse` sections go into a
+    /// submenu so the menu stays on screen.
+    private func addTrackSection(to menu: NSMenu, title: String, items: [NSMenuItem], collapse: Bool = false) {
+        if collapse || items.count > 8 {
             let current = items.first { $0.state == .on }?.title
             let parent = NSMenuItem(title: current.map { "\(title): \($0)" } ?? title,
                                     action: nil, keyEquivalent: "")
